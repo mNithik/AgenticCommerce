@@ -1,5 +1,5 @@
-import type { AgentName, SafeSpendEvent } from "@/lib/types";
-import { asMoney, normalizeQuery } from "@/lib/utils";
+import type { AgentName, SafeSpendEvent } from "./types";
+import { asMoney, normalizeQuery } from "./utils";
 
 function redactQuery(query: string) {
   return query

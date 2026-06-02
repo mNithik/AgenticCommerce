@@ -1,8 +1,8 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
-import type { AnalystOutput, LLMProviderName } from "@/lib/types";
-import type { AnalystInput, LLMProvider, SummaryInput } from "@/lib/llm/provider";
-import { clamp, makeId, unique } from "@/lib/utils";
+import type { AnalystOutput, LLMProviderName } from "../types";
+import type { AnalystInput, LLMProvider, SummaryInput } from "./provider";
+import { clamp, makeId, unique } from "../utils";
 
 type Options = {
   name: LLMProviderName;

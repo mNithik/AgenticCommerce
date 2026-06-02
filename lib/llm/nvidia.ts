@@ -1,5 +1,5 @@
-import { config } from "@/lib/config";
-import { OpenAICompatibleProvider } from "@/lib/llm/openai-compatible";
+import { config } from "../config";
+import { OpenAICompatibleProvider } from "./openai-compatible";
 
 export const nvidiaProvider = new OpenAICompatibleProvider({
   name: "nvidia",

@@ -1,6 +1,6 @@
-import type { AnalystInput, LLMProvider, SummaryInput } from "@/lib/llm/provider";
-import type { AnalystOutput } from "@/lib/types";
-import { clamp, makeId, unique } from "@/lib/utils";
+import type { AnalystInput, LLMProvider, SummaryInput } from "./provider";
+import type { AnalystOutput } from "../types";
+import { clamp, makeId, unique } from "../utils";
 
 function pickSentence(text: string, fallback: string) {
   return text.split(/(?<=[.!?])\s+/)[0]?.trim() || fallback;

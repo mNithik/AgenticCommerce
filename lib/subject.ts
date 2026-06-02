@@ -1,5 +1,5 @@
-import type { LLMProvider } from "@/lib/llm/provider";
-import { deterministicProvider } from "@/lib/llm/deterministic";
+import type { LLMProvider } from "./llm/provider";
+import { deterministicProvider } from "./llm/deterministic";
 
 export async function extractSubject(question: string, provider: LLMProvider) {
   const chosen = provider.isConfigured() ? provider : deterministicProvider;

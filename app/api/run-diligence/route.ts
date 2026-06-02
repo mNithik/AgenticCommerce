@@ -1,6 +1,6 @@
-import { runDiligence } from "@/lib/orchestrator";
-import { serializeSSE } from "@/lib/sse";
-import type { RunEvent } from "@/lib/types";
+import { runDiligence } from "../../../lib/orchestrator";
+import { serializeSSE } from "../../../lib/sse";
+import type { RunEvent } from "../../../lib/types";
 
 export const runtime = "nodejs";
 

@@ -1,4 +1,4 @@
-import type { EvidenceRecord } from "@/lib/types";
+import type { EvidenceRecord } from "../lib/types";
 
 export function EvidenceTable({ records }: { records: EvidenceRecord[] }) {
   return (

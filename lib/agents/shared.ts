@@ -1,4 +1,4 @@
-import type { AgentName, EvidenceRecord } from "@/lib/types";
+import type { AgentName, EvidenceRecord } from "../types";
 
 export type AgentDefinition = {
   name: AgentName;

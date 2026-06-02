@@ -1,4 +1,4 @@
-import type { RunEvent } from "@/lib/types";
+import type { RunEvent } from "./types";
 
 const encoder = new TextEncoder();
 

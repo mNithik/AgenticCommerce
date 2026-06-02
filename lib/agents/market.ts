@@ -1,4 +1,4 @@
-import type { AgentDefinition } from "@/lib/agents/shared";
+import type { AgentDefinition } from "./shared";
 
 export const marketAgent: AgentDefinition = {
   name: "Market",

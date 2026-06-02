@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SafeSpend } from "@/lib/safespend";
+import { SafeSpend } from "../lib/safespend";
 
 describe("SafeSpend", () => {
   it("blocks duplicate queries and budget overflow", () => {

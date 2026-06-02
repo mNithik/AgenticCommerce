@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { config, resolvePaymentMode } from "@/lib/config";
-import { mockPaidSearch } from "@/lib/mock/search-fixtures";
-import type { AgentName, PaymentMode, SearchSource } from "@/lib/types";
+import { config, resolvePaymentMode } from "./config";
+import { mockPaidSearch } from "./mock/search-fixtures";
+import type { AgentName, PaymentMode, SearchSource } from "./types";
 
 const execFileAsync = promisify(execFile);
 

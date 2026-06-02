@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { AgentTimeline } from "@/components/AgentTimeline";
-import { EvidenceTable } from "@/components/EvidenceTable";
-import { MemoView } from "@/components/MemoView";
-import { ModeBadge } from "@/components/ModeBadge";
-import { SpendTracker } from "@/components/SpendTracker";
-import type { DiligenceRun, RunEvent } from "@/lib/types";
+import { AgentTimeline } from "./AgentTimeline";
+import { EvidenceTable } from "./EvidenceTable";
+import { MemoView } from "./MemoView";
+import { ModeBadge } from "./ModeBadge";
+import { SpendTracker } from "./SpendTracker";
+import type { DiligenceRun, RunEvent } from "../lib/types";
 
 async function consumeSSE(
   response: Response,

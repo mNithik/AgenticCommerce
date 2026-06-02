@@ -1,5 +1,5 @@
-import type { LLMProvider } from "@/lib/llm/provider";
-import type { AnalystOutput, DiligenceRun, EvidenceRecord, MemoClaim } from "@/lib/types";
+import type { LLMProvider } from "../llm/provider";
+import type { AnalystOutput, EvidenceRecord, MemoClaim } from "../types";
 
 function renderClaim(claim: MemoClaim, records: EvidenceRecord[]) {
   const sources = claim.recordIds

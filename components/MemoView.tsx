@@ -1,4 +1,4 @@
-import type { AnalystOutput, EvidenceRecord } from "@/lib/types";
+import type { AnalystOutput, EvidenceRecord } from "../lib/types";
 
 function ReceiptLink({ record }: { record: EvidenceRecord | undefined }) {
   if (!record) {

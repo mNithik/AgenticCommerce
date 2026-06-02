@@ -1,4 +1,4 @@
-import type { LLMProviderName, PaymentMode } from "@/lib/types";
+import type { LLMProviderName, PaymentMode } from "./types";
 
 function env(name: string): string | undefined {
   const value = process.env[name]?.trim();

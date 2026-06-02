@@ -1,4 +1,4 @@
-import type { PaymentMode } from "@/lib/types";
+import type { PaymentMode } from "../lib/types";
 
 export function ModeBadge({ mode }: { mode: PaymentMode | null }) {
   const label = mode === "live" ? "Live x402" : mode === "mock" ? "Mock" : "Waiting";

@@ -1,8 +1,8 @@
-import type { AgentName, PaymentMode, SearchSource } from "@/lib/types";
-import { hashText, slugify } from "@/lib/utils";
+import type { AgentName, PaymentMode, SearchSource } from "../types";
+import { hashText, slugify } from "../utils";
 
 type MockSearchResult = {
-  results: SearchSource[];
+  sources: SearchSource[];
   costUsd: number;
   provider: "Tavily x402 (mock)";
   paymentMode: PaymentMode;
@@ -89,12 +89,12 @@ export async function mockPaidSearch(params: {
 }): Promise<MockSearchResult> {
   const offset = Number.parseInt(hashText(params.query).slice(0, 2), 16) % 3;
   const builders = templates[params.agent];
-  const results = [0, 1, 2].map((index) => builders[(index + offset) % builders.length](params.subject));
+  const sources = [0, 1, 2].map((index) => builders[(index + offset) % builders.length](params.subject));
 
   await new Promise((resolve) => setTimeout(resolve, 120));
 
   return {
-    results,
+    sources,
     costUsd: 0.01,
     provider: "Tavily x402 (mock)",
     paymentMode: "mock",

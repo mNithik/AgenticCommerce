@@ -1,16 +1,16 @@
-import { evidenceAgent } from "@/lib/agents/evidence";
-import { marketAgent } from "@/lib/agents/market";
-import { skepticAgent } from "@/lib/agents/skeptic";
-import { counterAgent } from "@/lib/agents/counter";
-import { synthesizeMemo } from "@/lib/agents/analyst";
-import type { AgentDefinition } from "@/lib/agents/shared";
-import { assertLiveModeConfigured, resolvePaymentMode } from "@/lib/config";
-import { getLLMProvider } from "@/lib/llm";
-import { SafeSpend } from "@/lib/safespend";
-import { extractSubject } from "@/lib/subject";
-import type { DiligenceRun, EvidenceRecord, RunEvent } from "@/lib/types";
-import { makeId, normalizeQuery } from "@/lib/utils";
-import { paidSearch } from "@/lib/x402-search";
+import { evidenceAgent } from "./agents/evidence";
+import { marketAgent } from "./agents/market";
+import { skepticAgent } from "./agents/skeptic";
+import { counterAgent } from "./agents/counter";
+import { synthesizeMemo } from "./agents/analyst";
+import type { AgentDefinition } from "./agents/shared";
+import { assertLiveModeConfigured, resolvePaymentMode } from "./config";
+import { getLLMProvider } from "./llm";
+import { SafeSpend } from "./safespend";
+import { extractSubject } from "./subject";
+import type { DiligenceRun, EvidenceRecord, RunEvent } from "./types";
+import { makeId, normalizeQuery } from "./utils";
+import { paidSearch } from "./x402-search";
 
 type RunOptions = {
   question: string;

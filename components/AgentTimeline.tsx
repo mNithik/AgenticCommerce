@@ -1,4 +1,4 @@
-import type { RunEvent } from "@/lib/types";
+import type { RunEvent } from "../lib/types";
 
 function renderEvent(event: RunEvent) {
   switch (event.type) {

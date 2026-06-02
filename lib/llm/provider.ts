@@ -1,4 +1,4 @@
-import type { AgentName, AnalystOutput, LLMProviderName, SearchSource } from "@/lib/types";
+import type { AgentName, AnalystOutput, LLMProviderName, SearchSource } from "../types";
 
 export type SummaryInput = {
   agent: AgentName;
