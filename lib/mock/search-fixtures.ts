@@ -2,7 +2,7 @@ import type { AgentName, PaymentMode, SearchSource } from "@/lib/types";
 import { hashText, slugify } from "@/lib/utils";
 
 type MockSearchResult = {
-  results: SearchSource[];
+  sources: SearchSource[];
   costUsd: number;
   provider: "Tavily x402 (mock)";
   paymentMode: PaymentMode;
@@ -94,7 +94,7 @@ export async function mockPaidSearch(params: {
   await new Promise((resolve) => setTimeout(resolve, 120));
 
   return {
-    results,
+    sources: results,
     costUsd: 0.01,
     provider: "Tavily x402 (mock)",
     paymentMode: "mock",
