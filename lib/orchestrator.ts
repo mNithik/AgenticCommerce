@@ -4,11 +4,11 @@ import { skepticAgent } from "@/lib/agents/skeptic";
 import { counterAgent } from "@/lib/agents/counter";
 import { synthesizeMemo } from "@/lib/agents/analyst";
 import type { AgentDefinition } from "@/lib/agents/shared";
-import { assertLiveModeConfigured, resolvePaymentMode } from "@/lib/config";
+import { assertLiveModeConfigured, config, resolvePaymentMode } from "@/lib/config";
 import { getLLMProvider } from "@/lib/llm";
 import { SafeSpend } from "@/lib/safespend";
 import { extractSubject } from "@/lib/subject";
-import type { DiligenceRun, EvidenceRecord, RunEvent } from "@/lib/types";
+import type { AgentName, DiligenceRun, EvidenceRecord, RunEvent } from "@/lib/types";
 import { makeId, normalizeQuery } from "@/lib/utils";
 import { paidSearch } from "@/lib/x402-search";
 
@@ -33,98 +33,105 @@ async function runAgent(params: {
   provider: ReturnType<typeof getLLMProvider>;
   state: MutableState;
   emit: (event: RunEvent) => void;
-}) {
-  const query = params.definition.query(params.subject);
-  const preflight = params.safeSpend.beforePaidCall({
-    agent: params.definition.name,
-    query,
-    spentUsd: params.state.spentUsd,
-    projectedCostUsd: 0.01,
-    paidCalls: params.state.paidCalls,
-  });
+}): Promise<EvidenceRecord[]> {
+  const queries = params.definition.queries(params.subject);
+  const produced: EvidenceRecord[] = [];
 
   params.emit({
     type: "agent_started",
     agent: params.definition.name,
-    queryPreview: preflight.queryPreview ?? query,
-    projectedSpendUsd: preflight.projectedSpendUsd ?? params.state.spentUsd,
+    queryPreview: queries[0] ?? params.subject,
+    projectedSpendUsd: params.state.spentUsd + 0.01,
   });
 
-  if (preflight.status === "blocked") {
-    params.emit({
-      type: "policy_blocked",
+  // Probe the angle from several directions; each sub-query is its own paid
+  // search and its own evidence record.
+  for (const query of queries) {
+    const preflight = params.safeSpend.beforePaidCall({
       agent: params.definition.name,
-      reason: preflight.reason,
+      query,
       spentUsd: params.state.spentUsd,
+      projectedCostUsd: 0.01,
+      paidCalls: params.state.paidCalls,
     });
-    return undefined;
+
+    if (preflight.status === "blocked") {
+      params.emit({
+        type: "policy_blocked",
+        agent: params.definition.name,
+        reason: preflight.reason,
+        spentUsd: params.state.spentUsd,
+      });
+      continue;
+    }
+
+    const payment = await paidSearch({
+      agent: params.definition.name,
+      query,
+      runId: params.runId,
+      callIndex: params.state.paidCalls + 1,
+      subject: params.subject,
+    });
+
+    const receiptCheck = params.safeSpend.recordReceipt(
+      params.definition.name,
+      payment.receipt,
+    );
+
+    if (receiptCheck.status === "blocked") {
+      params.emit({
+        type: "policy_blocked",
+        agent: params.definition.name,
+        reason: receiptCheck.reason,
+        spentUsd: params.state.spentUsd,
+      });
+      continue;
+    }
+
+    params.emit({
+      type: "payment_settled",
+      agent: params.definition.name,
+      receipt: payment.receipt,
+      costUsd: payment.costUsd,
+      paymentMode: payment.paymentMode,
+    });
+
+    const finding = await params.provider.summarizeFinding({
+      agent: params.definition.name,
+      subject: params.subject,
+      query,
+      sources: payment.sources,
+    });
+
+    const record: EvidenceRecord = {
+      id: makeId("rec", `${params.runId}_${params.definition.name}_${query}`),
+      agent: params.definition.name,
+      query,
+      normalizedQuery: normalizeQuery(query),
+      provider: payment.provider,
+      paymentMode: payment.paymentMode,
+      costUsd: payment.costUsd,
+      receipt: payment.receipt,
+      finding,
+      sources: payment.sources,
+      policyStatus: "allowed",
+    };
+
+    params.state.records.push(record);
+    params.state.spentUsd += payment.costUsd;
+    params.state.paidCalls += 1;
+    produced.push(record);
+
+    params.emit({
+      type: "agent_completed",
+      agent: params.definition.name,
+      record,
+      spentUsd: params.state.spentUsd,
+      paidCalls: params.state.paidCalls,
+    });
   }
 
-  const payment = await paidSearch({
-    agent: params.definition.name,
-    query,
-    runId: params.runId,
-    callIndex: params.state.paidCalls + 1,
-    subject: params.subject,
-  });
-
-  const receiptCheck = params.safeSpend.recordReceipt(
-    params.definition.name,
-    payment.receipt,
-  );
-
-  if (receiptCheck.status === "blocked") {
-    params.emit({
-      type: "policy_blocked",
-      agent: params.definition.name,
-      reason: receiptCheck.reason,
-      spentUsd: params.state.spentUsd,
-    });
-    throw new Error(`Duplicate receipt detected for ${params.definition.name}.`);
-  }
-
-  params.emit({
-    type: "payment_settled",
-    agent: params.definition.name,
-    receipt: payment.receipt,
-    costUsd: payment.costUsd,
-    paymentMode: payment.paymentMode,
-  });
-
-  const finding = await params.provider.summarizeFinding({
-    agent: params.definition.name,
-    subject: params.subject,
-    query,
-    sources: payment.sources,
-  });
-
-  const record: EvidenceRecord = {
-    id: makeId("rec", `${params.runId}_${params.definition.name}_${query}`),
-    agent: params.definition.name,
-    query,
-    normalizedQuery: normalizeQuery(query),
-    provider: payment.provider,
-    paymentMode: payment.paymentMode,
-    costUsd: payment.costUsd,
-    receipt: payment.receipt,
-    finding,
-    sources: payment.sources,
-    policyStatus: "allowed",
-  };
-
-  params.state.records.push(record);
-  params.state.spentUsd += payment.costUsd;
-  params.state.paidCalls += 1;
-
-  params.emit({
-    type: "agent_completed",
-    agent: params.definition.name,
-    record,
-    spentUsd: params.state.spentUsd,
-    paidCalls: params.state.paidCalls,
-  });
-
-  return record;
+  return produced;
 }
 
 export async function runDiligence({
@@ -137,7 +144,7 @@ export async function runDiligence({
   const paymentMode = resolvePaymentMode();
   const provider = getLLMProvider();
   const runId = makeId("run", `${question}_${Date.now()}`);
-  const safeSpend = new SafeSpend({ budgetCapUsd });
+  const safeSpend = new SafeSpend({ budgetCapUsd, maxPaidCalls: config.maxPaidCalls });
   const subject = await extractSubject(question, provider);
   const state: MutableState = {
     spentUsd: 0,
@@ -154,10 +161,9 @@ export async function runDiligence({
   });
 
   const primaryAgents = [marketAgent, evidenceAgent, counterAgent];
-  const primaryResults: Partial<Record<"Market" | "Evidence" | "Counter", EvidenceRecord>> = {};
 
   for (const definition of primaryAgents) {
-    const record = await runAgent({
+    await runAgent({
       definition,
       question,
       subject,
@@ -167,23 +173,23 @@ export async function runDiligence({
       state,
       emit,
     });
-
-    if (record && definition.name !== "Skeptic") {
-      primaryResults[definition.name as "Market" | "Evidence" | "Counter"] = record;
-    }
   }
 
-  const marketFinding = primaryResults.Market?.finding ?? "";
-  const evidenceFinding = primaryResults.Evidence?.finding ?? "";
-  const counterFinding = primaryResults.Counter?.finding ?? "";
+  // Aggregate every record an agent produced (now multiple per agent) before scoring.
+  const findingFor = (agent: AgentName) =>
+    state.records
+      .filter((record) => record.agent === agent)
+      .map((record) => record.finding)
+      .join("\n\n");
 
-  const marketConfidence = await provider.scoreConfidence(marketFinding);
-  const evidenceConfidence = await provider.scoreConfidence(evidenceFinding);
-  const counterSeverity = await provider.scoreNegativity(counterFinding);
+  const marketConfidence = await provider.scoreConfidence(findingFor("Market"));
+  const evidenceConfidence = await provider.scoreConfidence(findingFor("Evidence"));
+  const counterSeverity = await provider.scoreNegativity(findingFor("Counter"));
+  const skepticCostUsd = skepticAgent.queries(subject).length * 0.01;
   const shouldRunSkeptic =
     marketConfidence + evidenceConfidence >= 1.3 &&
     counterSeverity < 0.5 &&
-    state.spentUsd + 0.01 <= budgetCapUsd;
+    state.spentUsd + skepticCostUsd <= budgetCapUsd;
 
   if (shouldRunSkeptic) {
     await runAgent({

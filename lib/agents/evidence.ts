@@ -2,7 +2,10 @@ import type { AgentDefinition } from "@/lib/agents/shared";
 
 export const evidenceAgent: AgentDefinition = {
   name: "Evidence",
-  query(subject) {
-    return `${subject} reviews case studies proof legitimacy`;
+  queries(subject) {
+    return [
+      `${subject} reviews and ratings`,
+      `${subject} case studies and proof of legitimacy`,
+    ];
   },
 };

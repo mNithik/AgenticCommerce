@@ -2,7 +2,10 @@ import type { AgentDefinition } from "@/lib/agents/shared";
 
 export const skepticAgent: AgentDefinition = {
   name: "Skeptic",
-  query(subject) {
-    return `${subject} risks hidden fees failed deployments negative press`;
+  queries(subject) {
+    return [
+      `${subject} risks and hidden fees`,
+      `${subject} failed deployments and negative press`,
+    ];
   },
 };

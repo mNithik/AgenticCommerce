@@ -10,6 +10,8 @@ export const config = {
   tavilyX402Url: env("TAVILY_X402_URL") ?? "https://x402.tavily.com/search",
   agentWalletKey: env("AGENT_WALLET_KEY"),
   awalMaxAmount: env("AWAL_MAX_AMOUNT") ?? "20000",
+  // Hard ceiling on paid searches per run (3 agents x 2 queries + Skeptic x 2 = 8).
+  maxPaidCalls: Number(env("MAX_PAID_CALLS") ?? "10"),
   llmProvider: (env("LLM_PROVIDER") ?? "nvidia") as LLMProviderName,
   nvidiaApiKey: env("NVIDIA_API_KEY"),
   nvidiaBaseUrl: env("NVIDIA_BASE_URL") ?? "https://integrate.api.nvidia.com/v1",

@@ -2,7 +2,8 @@ import type { AgentName, EvidenceRecord } from "@/lib/types";
 
 export type AgentDefinition = {
   name: AgentName;
-  query(subject: string): string;
+  // Each agent probes its angle from several directions for deeper evidence.
+  queries(subject: string): string[];
 };
 
 export function buildRecordInput(record: EvidenceRecord) {
