@@ -44,6 +44,11 @@ async function runAgent(params: {
     projectedSpendUsd: params.state.spentUsd + 0.01,
   });
 
+  // URLs seen by previous sub-queries of THIS agent — filtered before summarization
+  // so the LLM doesn't receive the same content twice. Cross-agent overlap is
+  // intentionally preserved (convergence across agents is meaningful signal).
+  const agentSeenUrls = new Set<string>();
+
   // Probe the angle from several directions; each sub-query is its own paid
   // search and its own evidence record.
   for (const query of queries) {
@@ -99,11 +104,19 @@ async function runAgent(params: {
         paymentMode: payment.paymentMode,
       });
 
+      // Record stores all raw sources (for the evidence table + receipt trace).
+      // The LLM only sees sources not already surfaced by a previous sub-query
+      // of this agent, preventing the same content from inflating the finding.
+      const freshSources = payment.sources.filter(
+        (source) => source.url && !agentSeenUrls.has(source.url),
+      );
+      payment.sources.forEach((source) => source.url && agentSeenUrls.add(source.url));
+
       const summary = await params.provider.summarizeFinding({
         agent: params.definition.name,
         subject: params.subject,
         query,
-        sources: payment.sources,
+        sources: freshSources.length > 0 ? freshSources : payment.sources,
       });
 
       const record: EvidenceRecord = {
