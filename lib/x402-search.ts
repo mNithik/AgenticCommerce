@@ -38,18 +38,40 @@ function parseAwalJson(raw: string) {
       }))
     : [];
 
+  // awal returns the settlement proof in the base64 `PAYMENT-RESPONSE` response
+  // header (x402 standard), e.g. {"success":true,"transaction":"0x..","network":"eip155:8453"}.
+  // Decode that first; fall back to any top-level payment/settlement object.
+  const headers = (root.headers as Record<string, unknown> | undefined) ?? {};
+  const paymentResponseB64 = String(
+    headers["PAYMENT-RESPONSE"] ?? headers["X-PAYMENT-RESPONSE"] ?? "",
+  ).trim();
+
+  let headerReceipt = "";
+  if (paymentResponseB64) {
+    try {
+      const decoded = JSON.parse(
+        Buffer.from(paymentResponseB64, "base64").toString("utf8"),
+      ) as Record<string, unknown>;
+      headerReceipt = String(decoded.transaction ?? decoded.txHash ?? "").trim();
+    } catch {
+      headerReceipt = "";
+    }
+  }
+
   const payment =
     (root.payment as Record<string, unknown> | undefined) ??
     (root.settlement as Record<string, unknown> | undefined) ??
     {};
 
-  const receipt = String(
-    payment.transactionHash ??
-      payment.txHash ??
-      payment.transaction ??
-      payment.hash ??
-      "",
-  ).trim();
+  const receipt =
+    headerReceipt ||
+    String(
+      payment.transactionHash ??
+        payment.txHash ??
+        payment.transaction ??
+        payment.hash ??
+        "",
+    ).trim();
 
   const amountRaw = payment.amount ?? payment.value;
   const numericAmount =
@@ -96,18 +118,41 @@ async function livePaidSearch(params: {
     "--json",
   ];
 
-  const { stdout } = await execFileAsync("npx", args, {
-    maxBuffer: 10 * 1024 * 1024,
-    env: {
-      ...process.env,
-      AGENT_WALLET_KEY: config.agentWalletKey,
-    },
-  });
+  // awal signs with its authenticated CLI session; it inherits process.env.
+  // x402 settlement can transiently fail ("authorized but rejected by server");
+  // a failed attempt is NOT charged, so retry a couple of times before giving up.
+  const maxAttempts = 3;
+  let parsed: ReturnType<typeof parseAwalJson> | undefined;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const { stdout } = await execFileAsync("npx", args, {
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      const jsonStart = stdout.indexOf("{");
+      if (jsonStart === -1) {
+        throw new Error("awal returned no JSON payload.");
+      }
+      const candidate = parseAwalJson(stdout.slice(jsonStart));
+      if (!candidate.receipt) {
+        throw new Error("Live x402 search returned no receipt reference.");
+      }
+      parsed = candidate;
+      break;
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+      }
+    }
+  }
 
-  const parsed = parseAwalJson(stdout);
-
-  if (!parsed.receipt) {
-    throw new Error("Live x402 search returned no receipt reference.");
+  if (!parsed) {
+    throw new Error(
+      `Live x402 search failed after ${maxAttempts} attempts: ${
+        lastError instanceof Error ? lastError.message : String(lastError)
+      }`,
+    );
   }
 
   return {

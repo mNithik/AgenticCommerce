@@ -37,9 +37,9 @@ export function assertLiveModeConfigured() {
     return;
   }
 
-  if (!config.agentWalletKey) {
-    throw new Error(
-      "Live mode requires AGENT_WALLET_KEY. Set MOCK_X402=true for local mock runs.",
-    );
-  }
+  // Live payments are signed by the authenticated `awal` CLI session
+  // (`npx awal auth login/verify`), which manages the wallet itself — there is
+  // no raw private key to provide. AGENT_WALLET_KEY is therefore optional.
+  // If awal is not signed in, `npx awal x402 pay` will surface its own error
+  // at call time, which we propagate as a run_error.
 }
