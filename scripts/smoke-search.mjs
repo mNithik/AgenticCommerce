@@ -34,11 +34,28 @@ const body = JSON.stringify({
   max_results: 3,
 });
 
-const { stdout } = await exec(
-  "npx",
-  ["-y", "awal@2.10.0", "x402", "pay", url, "-X", "POST", "-d", body, "--max-amount", maxAmount, "--json"],
-  { maxBuffer: 10 * 1024 * 1024 },
-);
+const { stdout } = await awalExec([
+  "-y",
+  "awal@2.10.0",
+  "x402",
+  "pay",
+  url,
+  "-X",
+  "POST",
+  "-d",
+  body,
+  "--max-amount",
+  maxAmount,
+  "--json",
+]);
 
-console.log(stdout.slice(0, 2000));
-if (stdout.length > 2000) console.log("... (truncated)");
+console.log(stdout);
+function awalExec(commandArgs) {
+  if (process.platform === "win32") {
+    return exec("cmd.exe", ["/d", "/s", "/c", "npx", ...commandArgs], {
+      maxBuffer: 10 * 1024 * 1024,
+    });
+  }
+
+  return exec("npx", commandArgs, { maxBuffer: 10 * 1024 * 1024 });
+}

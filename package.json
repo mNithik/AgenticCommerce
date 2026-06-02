@@ -7,6 +7,7 @@
     "npm": ">=10.0.0"
   },
   "scripts": {
+    "clean": "node -e \"const fs=require('fs'); fs.rmSync('.next', { recursive: true, force: true }); console.log('Removed .next');\"",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

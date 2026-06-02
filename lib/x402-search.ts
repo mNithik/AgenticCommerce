@@ -1,10 +1,7 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { runAwal } from "./awal-cli";
 import { config, resolvePaymentMode } from "./config";
 import { mockPaidSearch } from "./mock/search-fixtures";
 import type { AgentName, PaymentMode, SearchSource } from "./types";
-
-const execFileAsync = promisify(execFile);
 
 type PaidSearchResult = {
   sources: SearchSource[];
@@ -13,6 +10,132 @@ type PaidSearchResult = {
   paymentMode: PaymentMode;
   provider: "Tavily x402" | "Tavily x402 (mock)";
 };
+
+function findFirstString(
+  value: unknown,
+  keys: string[],
+): string | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    const candidate = record[key];
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  for (const child of Object.values(record)) {
+    if (Array.isArray(child)) {
+      for (const item of child) {
+        const nested = findFirstString(item, keys);
+        if (nested) {
+          return nested;
+        }
+      }
+      continue;
+    }
+
+    const nested = findFirstString(child, keys);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return undefined;
+}
+
+function findFirstKeyValue(
+  value: unknown,
+  predicate: (key: string, candidate: unknown) => boolean,
+): unknown {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const [key, candidate] of Object.entries(record)) {
+    if (predicate(key, candidate)) {
+      return candidate;
+    }
+  }
+
+  for (const child of Object.values(record)) {
+    if (Array.isArray(child)) {
+      for (const item of child) {
+        const nested = findFirstKeyValue(item, predicate);
+        if (nested !== undefined) {
+          return nested;
+        }
+      }
+      continue;
+    }
+
+    const nested = findFirstKeyValue(child, predicate);
+    if (nested !== undefined) {
+      return nested;
+    }
+  }
+
+  return undefined;
+}
+
+function decodePaymentResponseHeader(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+
+  try {
+    const decoded = Buffer.from(value, "base64").toString("utf8");
+    return JSON.parse(decoded) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+function findFirstNumber(
+  value: unknown,
+  keys: string[],
+): number | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    const candidate = record[key];
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return candidate;
+    }
+    if (typeof candidate === "string" && candidate.trim()) {
+      const parsed = Number(candidate);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+
+  for (const child of Object.values(record)) {
+    if (Array.isArray(child)) {
+      for (const item of child) {
+        const nested = findFirstNumber(item, keys);
+        if (nested !== undefined) {
+          return nested;
+        }
+      }
+      continue;
+    }
+
+    const nested = findFirstNumber(child, keys);
+    if (nested !== undefined) {
+      return nested;
+    }
+  }
+
+  return undefined;
+}
 
 function parseAwalJson(raw: string) {
   const root = JSON.parse(raw) as Record<string, unknown>;
@@ -38,30 +161,51 @@ function parseAwalJson(raw: string) {
       }))
     : [];
 
-  const payment =
-    (root.payment as Record<string, unknown> | undefined) ??
-    (root.settlement as Record<string, unknown> | undefined) ??
-    {};
+  const paymentHeaderValue = findFirstKeyValue(root, (key, candidate) => {
+    if (typeof candidate !== "string") {
+      return false;
+    }
 
-  const receipt = String(
-    payment.transactionHash ??
-      payment.txHash ??
-      payment.transaction ??
-      payment.hash ??
-      "",
-  ).trim();
+    const normalized = key.toLowerCase();
+    return (
+      normalized === "payment-response" ||
+      normalized === "x-payment-response" ||
+      normalized === "payment_response" ||
+      normalized === "x_payment_response"
+    );
+  });
 
-  const amountRaw = payment.amount ?? payment.value;
-  const numericAmount =
-    typeof amountRaw === "number"
-      ? amountRaw
-      : typeof amountRaw === "string"
-        ? Number(amountRaw)
-        : Number.NaN;
-  const costUsd = Number.isFinite(numericAmount)
-    ? numericAmount > 1000
-      ? numericAmount / 1e6
-      : numericAmount
+  const paymentHeader = decodePaymentResponseHeader(paymentHeaderValue);
+
+  const receipt =
+    findFirstString(paymentHeader ?? root, [
+      "transactionHash",
+      "txHash",
+      "transaction",
+      "hash",
+      "receipt",
+      "receiptHash",
+    ]) ?? "";
+
+  const numericAmount = findFirstNumber(paymentHeader ?? root, [
+    "amount",
+    "value",
+    "maxAmountRequired",
+    "cost",
+  ]) ?? findFirstNumber(root, [
+    "amount",
+    "value",
+    "maxAmountRequired",
+    "cost",
+  ]);
+  const parsedAmount =
+    numericAmount !== undefined && Number.isFinite(numericAmount)
+      ? numericAmount
+      : undefined;
+  const costUsd = parsedAmount !== undefined
+    ? parsedAmount > 1000
+      ? parsedAmount / 1e6
+      : parsedAmount
     : 0.01;
 
   return {
@@ -96,7 +240,7 @@ async function livePaidSearch(params: {
     "--json",
   ];
 
-  const { stdout } = await execFileAsync("npx", args, {
+  const { stdout } = await runAwal(args, {
     maxBuffer: 10 * 1024 * 1024,
     env: {
       ...process.env,
@@ -104,7 +248,9 @@ async function livePaidSearch(params: {
     },
   });
 
-  const parsed = parseAwalJson(stdout);
+  const parsed = parseAwalJson(
+    typeof stdout === "string" ? stdout : stdout.toString("utf8"),
+  );
 
   if (!parsed.receipt) {
     throw new Error("Live x402 search returned no receipt reference.");

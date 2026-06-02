@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { deterministicProvider } from "./deterministic";
 import type { AnalystOutput, LLMProviderName } from "../types";
 import type { AnalystInput, LLMProvider, SummaryInput } from "./provider";
 import { clamp, makeId, unique } from "../utils";
@@ -14,6 +15,18 @@ type Options = {
 
 function cleanJson(value: string) {
   return value.replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
+}
+
+function extractJsonObject(value: string) {
+  const cleaned = cleanJson(value);
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return cleaned.slice(firstBrace, lastBrace + 1);
+  }
+
+  return cleaned;
 }
 
 function heuristicScore(text: string, positive: string[], negative: string[]) {
@@ -33,6 +46,43 @@ function heuristicScore(text: string, positive: string[], negative: string[]) {
   }
 
   return clamp(score, 0, 1);
+}
+
+function hasUsableClaim(
+  claim:
+    | Partial<AnalystOutput["rationale"]>
+    | Partial<AnalystOutput["strengths"][number]>
+    | undefined,
+) {
+  const text = claim?.claimText?.trim();
+  return Boolean(
+    text &&
+      text !== "Rationale unavailable." &&
+      !/^Strength \d+$/i.test(text) &&
+      !/^Concern \d+$/i.test(text) &&
+      !/^Next step \d+$/i.test(text),
+  );
+}
+
+function sanitizeClaimWithFallback(
+  claim:
+    | Partial<AnalystOutput["rationale"]>
+    | Partial<AnalystOutput["strengths"][number]>
+    | undefined,
+  fallbackClaim:
+    | Partial<AnalystOutput["rationale"]>
+    | Partial<AnalystOutput["strengths"][number]>
+    | undefined,
+  fallbackText: string,
+) {
+  const resolved = hasUsableClaim(claim) ? claim : fallbackClaim;
+
+  return {
+    id: resolved?.id || makeId("claim", fallbackText),
+    claimText: resolved?.claimText || fallbackText,
+    recordIds: unique(resolved?.recordIds ?? fallbackClaim?.recordIds ?? []).filter(Boolean),
+    sourceUrls: unique(resolved?.sourceUrls ?? fallbackClaim?.sourceUrls ?? []).filter(Boolean),
+  };
 }
 
 export class OpenAICompatibleProvider implements LLMProvider {
@@ -76,7 +126,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       {
         role: "system",
         content:
-          "Extract the shortest product, vendor, or purchase subject from the question. Return plain text only.",
+          "Extract the specific product, company, or vendor being evaluated. Prefer branded names like Apollo.io, Ramp, HubSpot, or Notion over generic words like purchase or vendor. Return plain text only.",
       },
       {
         role: "user",
@@ -177,7 +227,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       {
         role: "system",
         content:
-          "You are a venture diligence analyst. Return only valid JSON with keys recommendation, confidence, rationale, strengths, concerns, nextSteps. Each claim must include claimText, recordIds, and sourceUrls. Use only the provided record ids and URLs.",
+          "You are a venture diligence analyst. Return only valid JSON with keys recommendation, confidence, rationale, strengths, concerns, nextSteps. The rationale must be an object, not a string. Each claim object must include claimText, recordIds, and sourceUrls. Use only the provided record ids and URLs.",
       },
       {
         role: "user",
@@ -186,17 +236,33 @@ export class OpenAICompatibleProvider implements LLMProvider {
       },
     ]);
 
-    const parsed = JSON.parse(cleanJson(output)) as AnalystOutput;
+    let parsed: Partial<AnalystOutput>;
 
-    const sanitizeClaim = (
-      claim: AnalystOutput["rationale"] | AnalystOutput["strengths"][number],
-      fallback: string,
-    ) => ({
-      id: claim.id || makeId("claim", fallback),
-      claimText: claim.claimText || fallback,
-      recordIds: unique(claim.recordIds ?? []).filter(Boolean),
-      sourceUrls: unique(claim.sourceUrls ?? []).filter(Boolean),
-    });
+    try {
+      parsed = JSON.parse(extractJsonObject(output)) as AnalystOutput;
+    } catch {
+      parsed = {};
+    }
+
+    const fallbackRationaleText =
+      typeof parsed.rationale === "string"
+        ? parsed.rationale
+        : parsed.strengths?.[0]?.claimText ||
+          parsed.concerns?.[0]?.claimText ||
+          "Rationale unavailable.";
+
+    const fallbackOutput =
+      !hasUsableClaim(
+        typeof parsed.rationale === "object" ? parsed.rationale : undefined,
+      ) ||
+      !Array.isArray(parsed.strengths) ||
+      parsed.strengths.length === 0 ||
+      !Array.isArray(parsed.concerns) ||
+      parsed.concerns.length === 0 ||
+      !Array.isArray(parsed.nextSteps) ||
+      parsed.nextSteps.length === 0
+        ? await deterministicProvider.synthesizeAnalystOutput(input)
+        : undefined;
 
     return {
       recommendation:
@@ -204,18 +270,43 @@ export class OpenAICompatibleProvider implements LLMProvider {
         parsed.recommendation === "do_not_buy" ||
         parsed.recommendation === "need_more_evidence"
           ? parsed.recommendation
-          : "need_more_evidence",
-      confidence: clamp(parsed.confidence ?? 0.5, 0, 1),
-      rationale: sanitizeClaim(parsed.rationale, "Rationale unavailable."),
-      strengths: (parsed.strengths ?? [])
-        .slice(0, 3)
-        .map((claim, index) => sanitizeClaim(claim, `Strength ${index + 1}`)),
-      concerns: (parsed.concerns ?? [])
-        .slice(0, 3)
-        .map((claim, index) => sanitizeClaim(claim, `Concern ${index + 1}`)),
-      nextSteps: (parsed.nextSteps ?? [])
-        .slice(0, 3)
-        .map((claim, index) => sanitizeClaim(claim, `Next step ${index + 1}`)),
+          : (fallbackOutput?.recommendation ?? "need_more_evidence"),
+      confidence: clamp(parsed.confidence ?? fallbackOutput?.confidence ?? 0.5, 0, 1),
+      rationale: sanitizeClaimWithFallback(
+        typeof parsed.rationale === "object" ? parsed.rationale : undefined,
+        fallbackOutput?.rationale,
+        fallbackOutput?.rationale.claimText ?? fallbackRationaleText,
+      ),
+      strengths:
+        (parsed.strengths?.length ? parsed.strengths : fallbackOutput?.strengths ?? [])
+          .slice(0, 3)
+          .map((claim, index) =>
+            sanitizeClaimWithFallback(
+              claim,
+              fallbackOutput?.strengths[index],
+              fallbackOutput?.strengths[index]?.claimText ?? `Strength ${index + 1}`,
+            ),
+          ),
+      concerns:
+        (parsed.concerns?.length ? parsed.concerns : fallbackOutput?.concerns ?? [])
+          .slice(0, 3)
+          .map((claim, index) =>
+            sanitizeClaimWithFallback(
+              claim,
+              fallbackOutput?.concerns[index],
+              fallbackOutput?.concerns[index]?.claimText ?? `Concern ${index + 1}`,
+            ),
+          ),
+      nextSteps:
+        (parsed.nextSteps?.length ? parsed.nextSteps : fallbackOutput?.nextSteps ?? [])
+          .slice(0, 3)
+          .map((claim, index) =>
+            sanitizeClaimWithFallback(
+              claim,
+              fallbackOutput?.nextSteps[index],
+              fallbackOutput?.nextSteps[index]?.claimText ?? `Next step ${index + 1}`,
+            ),
+          ),
     };
   }
 }
