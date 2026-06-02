@@ -1,5 +1,5 @@
-import type { AnalystInput, LLMProvider, SummaryInput } from "@/lib/llm/provider";
-import type { AnalystOutput } from "@/lib/types";
+import type { AnalystInput, FindingResult, LLMProvider, SummaryInput } from "@/lib/llm/provider";
+import type { AnalystOutput, FindingClaim } from "@/lib/types";
 import { clamp, makeId, unique } from "@/lib/utils";
 
 function pickSentence(text: string, fallback: string) {
@@ -29,17 +29,24 @@ export const deterministicProvider: LLMProvider = {
     const pieces = cleaned.split(/(?: for | from | with | about )/i);
     return pieces[0].trim();
   },
-  async summarizeFinding(input: SummaryInput) {
+  async summarizeFinding(input: SummaryInput): Promise<FindingResult> {
     const topSources = input.sources.slice(0, 2);
-    const sourceSummary = topSources
-      .map((source) => `${source.title}: ${pickSentence(source.snippet, source.snippet)}`)
-      .join(" ");
     const posture =
-      input.agent === "Counter" || input.agent === "Skeptic"
-        ? "Risks and pushback show up in"
-        : "The strongest support shows up in";
+      input.agent === "Counter" || input.agent === "Skeptic" ? "Risk noted" : "Support found";
 
-    return `${posture} ${sourceSummary || "the available evidence"}. This summary is deterministic fallback output for ${input.agent.toLowerCase()} research on ${input.subject}.`;
+    const claims: FindingClaim[] = topSources.map((source) => ({
+      claimText: `${posture}: ${source.title} — ${pickSentence(source.snippet, source.snippet)}`,
+      sourceUrls: source.url ? [source.url] : [],
+    }));
+
+    if (claims.length === 0) {
+      claims.push({
+        claimText: `No sources available for ${input.agent.toLowerCase()} research on ${input.subject}.`,
+        sourceUrls: [],
+      });
+    }
+
+    return { text: claims.map((claim) => claim.claimText).join(" "), claims };
   },
   async scoreConfidence(text) {
     return keywordScore(text, ["growing", "strong", "adoption", "demand", "trusted"]);

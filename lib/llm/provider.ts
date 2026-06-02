@@ -1,4 +1,9 @@
-import type { AgentName, AnalystOutput, LLMProviderName, SearchSource } from "@/lib/types";
+import type { AgentName, AnalystOutput, FindingClaim, LLMProviderName, SearchSource } from "@/lib/types";
+
+export type FindingResult = {
+  text: string;
+  claims: FindingClaim[];
+};
 
 export type SummaryInput = {
   agent: AgentName;
@@ -22,7 +27,7 @@ export interface LLMProvider {
   readonly name: LLMProviderName;
   isConfigured(): boolean;
   extractSubject(question: string): Promise<string>;
-  summarizeFinding(input: SummaryInput): Promise<string>;
+  summarizeFinding(input: SummaryInput): Promise<FindingResult>;
   scoreConfidence(text: string): Promise<number>;
   scoreNegativity(text: string): Promise<number>;
   synthesizeAnalystOutput(input: AnalystInput): Promise<AnalystOutput>;

@@ -99,7 +99,7 @@ async function runAgent(params: {
         paymentMode: payment.paymentMode,
       });
 
-      const finding = await params.provider.summarizeFinding({
+      const summary = await params.provider.summarizeFinding({
         agent: params.definition.name,
         subject: params.subject,
         query,
@@ -115,7 +115,8 @@ async function runAgent(params: {
         paymentMode: payment.paymentMode,
         costUsd: payment.costUsd,
         receipt: payment.receipt,
-        finding,
+        finding: summary.text,
+        findingClaims: summary.claims,
         sources: payment.sources,
         policyStatus: "allowed",
       };

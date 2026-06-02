@@ -14,6 +14,12 @@ export type SearchSource = {
   snippet: string;
 };
 
+// A single grounded sentence of a finding, tied to the source URL(s) it draws from.
+export type FindingClaim = {
+  claimText: string;
+  sourceUrls: string[];
+};
+
 export type EvidenceRecord = {
   id: string;
   agent: AgentName;
@@ -24,6 +30,7 @@ export type EvidenceRecord = {
   costUsd: number;
   receipt: string;
   finding: string;
+  findingClaims: FindingClaim[];
   sources: SearchSource[];
   policyStatus: PolicyStatus;
 };

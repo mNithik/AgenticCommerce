@@ -31,16 +31,35 @@ export function EvidenceTable({ records }: { records: EvidenceRecord[] }) {
               <td style={{ padding: "14px 12px 14px 0", fontWeight: 700 }}>{record.agent}</td>
               <td style={{ padding: "14px 12px 14px 0" }}>{record.query}</td>
               <td style={{ padding: "14px 12px 14px 0", lineHeight: 1.5 }}>
-                <div>{record.finding}</div>
-                <div style={{ marginTop: 8, fontSize: 13, color: "var(--muted)" }}>
-                  {record.sources.slice(0, 2).map((source) => (
-                    <div key={source.url}>
-                      <a href={source.url} target="_blank" rel="noreferrer">
-                        {source.title}
-                      </a>
-                    </div>
-                  ))}
-                </div>
+                {record.findingClaims.length > 0 ? (
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {record.findingClaims.map((claim, index) => (
+                      <li key={index} style={{ marginBottom: 8 }}>
+                        <div>{claim.claimText}</div>
+                        {claim.sourceUrls.length > 0 ? (
+                          <div style={{ marginTop: 4, fontSize: 13, color: "var(--muted)" }}>
+                            {claim.sourceUrls.map((url) => {
+                              const source = record.sources.find((item) => item.url === url);
+                              return (
+                                <a
+                                  key={url}
+                                  href={url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  style={{ marginRight: 10 }}
+                                >
+                                  {source?.title ?? "source"}
+                                </a>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div>{record.finding}</div>
+                )}
               </td>
               <td style={{ padding: "14px 12px 14px 0" }}>
                 {record.paymentMode === "live" ? (
