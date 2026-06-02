@@ -188,15 +188,21 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     const parsed = JSON.parse(cleanJson(output)) as AnalystOutput;
 
-    const sanitizeClaim = (
-      claim: AnalystOutput["rationale"] | AnalystOutput["strengths"][number],
-      fallback: string,
-    ) => ({
-      id: claim.id || makeId("claim", fallback),
-      claimText: claim.claimText || fallback,
-      recordIds: unique(claim.recordIds ?? []).filter(Boolean),
-      sourceUrls: unique(claim.sourceUrls ?? []).filter(Boolean),
-    });
+    const sanitizeClaim = (claim: unknown, fallback: string) => {
+      // Models sometimes return a claim as a bare string instead of an object.
+      const c = (typeof claim === "string" ? { claimText: claim } : claim ?? {}) as {
+        id?: string;
+        claimText?: string;
+        recordIds?: unknown;
+        sourceUrls?: unknown;
+      };
+      return {
+        id: c.id || makeId("claim", fallback),
+        claimText: c.claimText || fallback,
+        recordIds: unique(Array.isArray(c.recordIds) ? c.recordIds : []).filter(Boolean),
+        sourceUrls: unique(Array.isArray(c.sourceUrls) ? c.sourceUrls : []).filter(Boolean),
+      };
+    };
 
     return {
       recommendation:
