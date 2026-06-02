@@ -1,0 +1,33 @@
+{
+  "name": "proofspend",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.9.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest run",
+    "setup:check": "node scripts/check-prerequisites.mjs",
+    "smoke:llm": "node scripts/smoke-llm.mjs",
+    "smoke:search": "node scripts/smoke-search.mjs",
+    "postinstall": "node -e \"console.log('ProofSpend: copy .env.example to .env if needed, then npm run setup:check')\""
+  },
+  "dependencies": {
+    "next": "^15.0.0",
+    "openai": "^4.67.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
