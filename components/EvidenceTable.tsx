@@ -1,6 +1,12 @@
 import type { EvidenceRecord } from "../lib/types";
 
-export function EvidenceTable({ records }: { records: EvidenceRecord[] }) {
+export function EvidenceTable({
+  records,
+  highlightedRecordIds = [],
+}: {
+  records: EvidenceRecord[];
+  highlightedRecordIds?: string[];
+}) {
   return (
     <section
       style={{
@@ -27,7 +33,17 @@ export function EvidenceTable({ records }: { records: EvidenceRecord[] }) {
         </thead>
         <tbody>
           {records.map((record) => (
-            <tr key={record.id} style={{ borderBottom: "1px solid var(--line)", verticalAlign: "top" }}>
+            <tr
+              id={`record-${record.id}`}
+              key={record.id}
+              style={{
+                borderBottom: "1px solid var(--line)",
+                verticalAlign: "top",
+                background: highlightedRecordIds.includes(record.id)
+                  ? "rgba(37, 99, 235, 0.08)"
+                  : "transparent",
+              }}
+            >
               <td style={{ padding: "14px 12px 14px 0", fontWeight: 700 }}>{record.agent}</td>
               <td style={{ padding: "14px 12px 14px 0" }}>{record.query}</td>
               <td style={{ padding: "14px 12px 14px 0", lineHeight: 1.5 }}>

@@ -12,10 +12,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "vitest run",
+    "test": "vitest run --exclude \"ayush/**\"",
     "setup:check": "node scripts/check-prerequisites.mjs",
     "smoke:llm": "node scripts/smoke-llm.mjs",
     "smoke:search": "node scripts/smoke-search.mjs",
+    "probe:awal": "node scripts/probe-awal.mjs",
     "postinstall": "node -e \"console.log('ProofSpend: copy .env.example to .env if needed, then npm run setup:check')\""
   },
   "dependencies": {

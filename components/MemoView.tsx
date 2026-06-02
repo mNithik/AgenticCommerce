@@ -19,9 +19,13 @@ function ReceiptLink({ record }: { record: EvidenceRecord | undefined }) {
 export function MemoView({
   analystOutput,
   records,
+  activeRecordIds = [],
+  onClaimSelect,
 }: {
   analystOutput: AnalystOutput | null;
   records: EvidenceRecord[];
+  activeRecordIds?: string[];
+  onClaimSelect?: (recordIds: string[]) => void;
 }) {
   if (!analystOutput) {
     return (
@@ -43,8 +47,37 @@ export function MemoView({
 
   const renderClaims = (claims: AnalystOutput["strengths"]) =>
     claims.map((claim) => (
-      <li key={claim.id} style={{ marginBottom: 12 }}>
-        <div>{claim.claimText}</div>
+      <li
+        key={claim.id}
+        style={{
+          marginBottom: 12,
+          listStyle: "none",
+          border: activeRecordIds.some((recordId) => claim.recordIds.includes(recordId))
+            ? "1px solid rgba(37, 99, 235, 0.35)"
+            : "1px solid transparent",
+          borderRadius: 16,
+          padding: 12,
+          background: activeRecordIds.some((recordId) => claim.recordIds.includes(recordId))
+            ? "rgba(37, 99, 235, 0.08)"
+            : "transparent",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => onClaimSelect?.(claim.recordIds)}
+          style={{
+            background: "transparent",
+            border: "none",
+            padding: 0,
+            textAlign: "left",
+            width: "100%",
+            cursor: claim.recordIds.length ? "pointer" : "default",
+            color: "inherit",
+            font: "inherit",
+          }}
+        >
+          <div>{claim.claimText}</div>
+        </button>
         <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}>
           {claim.recordIds.map((recordId) => {
             const record = records.find((item) => item.id === recordId);
@@ -101,6 +134,12 @@ export function MemoView({
       <div style={{ marginTop: 22 }}>
         <h3>Next steps</h3>
         <ul>{renderClaims(analystOutput.nextSteps)}</ul>
+      </div>
+
+      <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--line)", color: "var(--muted)" }}>
+        {records.some((record) => record.paymentMode === "live")
+          ? `${records.length} paid searches settled on Base. Click any claim to trace back to the evidence row and receipt.`
+          : "Mock mode watermark: these receipts are simulated and not on-chain."}
       </div>
     </section>
   );

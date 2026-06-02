@@ -4,6 +4,8 @@ export type PaymentMode = "mock" | "live";
 
 export type LLMProviderName = "nvidia" | "openai" | "huggingface" | "deterministic";
 
+export type PolicyProfile = "standard" | "strict";
+
 export type PolicyStatus = "allowed" | "blocked";
 
 export type Recommendation = "buy" | "do_not_buy" | "need_more_evidence";
@@ -30,7 +32,7 @@ export type EvidenceRecord = {
 
 export type SafeSpendEvent = {
   agent: AgentName;
-  action: "preflight" | "receipt";
+  action: "batch_preflight" | "preflight" | "receipt";
   status: PolicyStatus;
   reason: string;
   queryPreview?: string;
@@ -62,6 +64,7 @@ export type DiligenceRun = {
   paidCalls: number;
   paymentMode: PaymentMode;
   llmProvider: LLMProviderName;
+  policyProfile: PolicyProfile;
   recommendation: Recommendation;
   confidence: number;
   records: EvidenceRecord[];
@@ -70,12 +73,24 @@ export type DiligenceRun = {
   safeSpendLog: SafeSpendEvent[];
 };
 
+export type ProofPacketMetadata = {
+  exportedAt: string;
+  appName: "ProofSpend";
+  exportFormatVersion: 1;
+};
+
+export type ProofPacketJson = {
+  metadata: ProofPacketMetadata;
+  run: DiligenceRun;
+};
+
 export type RunEvent =
   | {
       type: "run_started";
       runId: string;
       paymentMode: PaymentMode;
       llmProvider: LLMProviderName;
+      policyProfile: PolicyProfile;
       budgetCapUsd: number;
     }
   | {

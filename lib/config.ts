@@ -1,4 +1,4 @@
-import type { LLMProviderName, PaymentMode } from "./types";
+import type { LLMProviderName, PaymentMode, PolicyProfile } from "./types";
 
 function env(name: string): string | undefined {
   const value = process.env[name]?.trim();
@@ -10,7 +10,9 @@ export const config = {
   tavilyX402Url: env("TAVILY_X402_URL") ?? "https://x402.tavily.com/search",
   agentWalletKey: env("AGENT_WALLET_KEY"),
   awalMaxAmount: env("AWAL_MAX_AMOUNT") ?? "20000",
+  defaultPaidCallCostUsd: Number(env("DEFAULT_PAID_CALL_COST_USD") ?? "0.01"),
   llmProvider: (env("LLM_PROVIDER") ?? "nvidia") as LLMProviderName,
+  policyProfile: (env("POLICY_PROFILE") ?? "standard") as PolicyProfile,
   nvidiaApiKey: env("NVIDIA_API_KEY"),
   nvidiaBaseUrl: env("NVIDIA_BASE_URL") ?? "https://integrate.api.nvidia.com/v1",
   nvidiaModelSummary:
@@ -30,6 +32,12 @@ export const config = {
 
 export function resolvePaymentMode(): PaymentMode {
   return config.mockX402 ? "mock" : "live";
+}
+
+export function resolvePolicyProfile(override?: string): PolicyProfile {
+  return override === "strict" || override === "standard"
+    ? override
+    : config.policyProfile;
 }
 
 export function assertLiveModeConfigured() {

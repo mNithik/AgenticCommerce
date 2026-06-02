@@ -23,6 +23,7 @@ export async function synthesizeMemo(params: {
   subject: string;
   records: EvidenceRecord[];
   provider: LLMProvider;
+  paymentMode: EvidenceRecord["paymentMode"];
 }): Promise<{ analystOutput: AnalystOutput; memo: string }> {
   const analystOutput = await params.provider.synthesizeAnalystOutput({
     question: params.question,
@@ -52,6 +53,11 @@ export async function synthesizeMemo(params: {
     ``,
     `## Next steps`,
     ...analystOutput.nextSteps.map((claim) => renderClaim(claim, params.records)),
+    ``,
+    `## Receipt verification`,
+    params.paymentMode === "live"
+      ? `${params.records.length} paid searches settled on Base. Verify the transaction links in the evidence table or proof packet.`
+      : `This run used simulated receipts in mock mode. Switch to live mode to produce on-chain Base receipts.`,
   ];
 
   return {

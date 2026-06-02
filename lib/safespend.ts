@@ -13,6 +13,12 @@ type SafeSpendOptions = {
   maxPaidCalls?: number;
 };
 
+const sensitiveQueryPatterns = [
+  /\b\d{3}-\d{2}-\d{4}\b/,
+  /\b(?:\d[ -]*?){13,16}\b/,
+  /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,
+];
+
 export class SafeSpend {
   private readonly budgetCapUsd: number;
   private readonly maxPaidCalls: number;
@@ -23,6 +29,66 @@ export class SafeSpend {
   constructor(options: SafeSpendOptions) {
     this.budgetCapUsd = options.budgetCapUsd;
     this.maxPaidCalls = options.maxPaidCalls ?? 4;
+  }
+
+  batchPreflight(params: {
+    agents: AgentName[];
+    queries: string[];
+    spentUsd: number;
+    projectedCostUsdPerCall: number;
+    paidCalls: number;
+  }) {
+    const queryPreview = params.queries.map(redactQuery).join(" | ");
+    const projectedSpendUsd = asMoney(
+      params.spentUsd + params.projectedCostUsdPerCall * params.queries.length,
+    );
+
+    let event: SafeSpendEvent;
+
+    if (params.paidCalls + params.queries.length > this.maxPaidCalls) {
+      event = {
+        agent: params.agents[0] ?? "Market",
+        action: "batch_preflight",
+        status: "blocked",
+        reason: "Planned run exceeds the paid call cap for this policy profile.",
+        queryPreview,
+        projectedSpendUsd,
+      };
+    } else if (projectedSpendUsd > this.budgetCapUsd) {
+      event = {
+        agent: params.agents[0] ?? "Market",
+        action: "batch_preflight",
+        status: "blocked",
+        reason: "Planned run would exceed the budget cap before payment starts.",
+        queryPreview,
+        projectedSpendUsd,
+      };
+    } else if (params.queries.some((query) => this.containsSensitiveQuery(query))) {
+      event = {
+        agent: params.agents[0] ?? "Market",
+        action: "batch_preflight",
+        status: "blocked",
+        reason: "Sensitive query content is blocked before payment.",
+        queryPreview,
+        projectedSpendUsd,
+      };
+    } else {
+      event = {
+        agent: params.agents[0] ?? "Market",
+        action: "batch_preflight",
+        status: "allowed",
+        reason: "Planned run cleared batch SafeSpend checks.",
+        queryPreview,
+        projectedSpendUsd,
+      };
+    }
+
+    this.events.push(event);
+    return event;
+  }
+
+  private containsSensitiveQuery(query: string) {
+    return sensitiveQueryPatterns.some((pattern) => pattern.test(query));
   }
 
   beforePaidCall(params: {
@@ -62,6 +128,15 @@ export class SafeSpend {
         action: "preflight",
         status: "blocked",
         reason: "Duplicate query blocked.",
+        queryPreview,
+        projectedSpendUsd,
+      };
+    } else if (this.containsSensitiveQuery(params.query)) {
+      event = {
+        agent: params.agent,
+        action: "preflight",
+        status: "blocked",
+        reason: "Sensitive query content blocked before payment.",
         queryPreview,
         projectedSpendUsd,
       };

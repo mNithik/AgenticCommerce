@@ -1,12 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AgentTimeline } from "./AgentTimeline";
 import { EvidenceTable } from "./EvidenceTable";
+import { ExportProofPacket } from "./ExportProofPacket";
 import { MemoView } from "./MemoView";
+import { MockWatermark } from "./MockWatermark";
 import { ModeBadge } from "./ModeBadge";
+import { RunHistory } from "./RunHistory";
+import { SafeSpendPanel } from "./SafeSpendPanel";
 import { SpendTracker } from "./SpendTracker";
-import type { DiligenceRun, RunEvent } from "../lib/types";
+import type { DiligenceRun, PolicyProfile, RunEvent } from "../lib/types";
+
+const HISTORY_KEY = "proofspend.runHistory.v1";
 
 async function consumeSSE(
   response: Response,
@@ -45,12 +51,15 @@ async function consumeSSE(
 }
 
 export function RunForm() {
-  const [question, setQuestion] = useState("Should I buy a vendor that promises receipt-backed AI research for procurement diligence?");
+  const [question, setQuestion] = useState("Should I spend $500 per month on Apollo.io for B2B lead generation for my early-stage SaaS startup?");
   const [budgetCapUsd, setBudgetCapUsd] = useState(0.25);
+  const [policyProfile, setPolicyProfile] = useState<PolicyProfile>("standard");
   const [isRunning, setIsRunning] = useState(false);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [run, setRun] = useState<DiligenceRun | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeRecordIds, setActiveRecordIds] = useState<string[]>([]);
+  const [history, setHistory] = useState<DiligenceRun[]>([]);
 
   const spentUsd =
     run?.spentUsd ??
@@ -64,12 +73,49 @@ export function RunForm() {
     run?.paymentMode ??
     (events.find((event) => event.type === "run_started")?.paymentMode ?? null);
 
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(HISTORY_KEY);
+      if (!raw) {
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as DiligenceRun[];
+      if (Array.isArray(parsed)) {
+        setHistory(parsed);
+      }
+    } catch {
+      window.localStorage.removeItem(HISTORY_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeRecordIds.length === 0) {
+      return;
+    }
+
+    const target = document.getElementById(`record-${activeRecordIds[0]}`);
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [activeRecordIds]);
+
+  function saveRunToHistory(completedRun: DiligenceRun) {
+    setHistory((current) => {
+      const next = [
+        completedRun,
+        ...current.filter((item) => item.id !== completedRun.id),
+      ].slice(0, 10);
+      window.localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsRunning(true);
     setEvents([]);
     setRun(null);
     setError(null);
+    setActiveRecordIds([]);
 
     try {
       const response = await fetch("/api/run-diligence", {
@@ -80,6 +126,7 @@ export function RunForm() {
         body: JSON.stringify({
           question,
           budgetCapUsd,
+          policyProfile,
         }),
       });
 
@@ -92,6 +139,7 @@ export function RunForm() {
 
         if (incomingEvent.type === "complete") {
           setRun(incomingEvent.run);
+          saveRunToHistory(incomingEvent.run);
         }
 
         if (incomingEvent.type === "run_error") {
@@ -184,6 +232,23 @@ export function RunForm() {
                 }}
               />
             </label>
+            <label style={{ display: "block" }}>
+              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>Policy profile</div>
+              <select
+                value={policyProfile}
+                onChange={(event) => setPolicyProfile(event.target.value as PolicyProfile)}
+                style={{
+                  width: 160,
+                  borderRadius: 14,
+                  border: "1px solid var(--line)",
+                  padding: "12px 14px",
+                  background: "rgba(255,255,255,0.72)",
+                }}
+              >
+                <option value="standard">standard</option>
+                <option value="strict">strict</option>
+              </select>
+            </label>
 
             <button
               type="submit"
@@ -208,6 +273,8 @@ export function RunForm() {
         </form>
       </section>
 
+      <MockWatermark mode={mode} />
+
       <div
         style={{
           display: "grid",
@@ -221,8 +288,27 @@ export function RunForm() {
       </div>
 
       <div style={{ display: "grid", gap: 20, marginTop: 20 }}>
-        <MemoView analystOutput={run?.analystOutput ?? null} records={run?.records ?? []} />
-        <EvidenceTable records={run?.records ?? []} />
+        <RunHistory
+          runs={history}
+          onSelect={(selectedRun) => {
+            setRun(selectedRun);
+            setEvents([]);
+            setError(null);
+            setActiveRecordIds([]);
+            setQuestion(selectedRun.input);
+            setBudgetCapUsd(selectedRun.budgetCapUsd);
+            setPolicyProfile(selectedRun.policyProfile);
+          }}
+        />
+        <ExportProofPacket run={run} />
+        <MemoView
+          analystOutput={run?.analystOutput ?? null}
+          records={run?.records ?? []}
+          activeRecordIds={activeRecordIds}
+          onClaimSelect={setActiveRecordIds}
+        />
+        <SafeSpendPanel events={run?.safeSpendLog ?? []} />
+        <EvidenceTable records={run?.records ?? []} highlightedRecordIds={activeRecordIds} />
       </div>
     </div>
   );

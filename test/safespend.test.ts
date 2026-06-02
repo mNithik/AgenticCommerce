@@ -31,4 +31,27 @@ describe("SafeSpend", () => {
     expect(duplicate.status).toBe("blocked");
     expect(overflow.status).toBe("blocked");
   });
+
+  it("blocks sensitive queries and over-budget batch plans", () => {
+    const safeSpend = new SafeSpend({ budgetCapUsd: 0.02, maxPaidCalls: 4 });
+
+    const batch = safeSpend.batchPreflight({
+      agents: ["Market", "Evidence", "Counter"],
+      queries: ["Apollo pricing", "Apollo reviews", "Apollo complaints"],
+      spentUsd: 0,
+      projectedCostUsdPerCall: 0.01,
+      paidCalls: 0,
+    });
+
+    const pii = safeSpend.beforePaidCall({
+      agent: "Market",
+      query: "apollo.io owner email test@example.com",
+      spentUsd: 0,
+      projectedCostUsd: 0.01,
+      paidCalls: 0,
+    });
+
+    expect(batch.status).toBe("blocked");
+    expect(pii.status).toBe("blocked");
+  });
 });

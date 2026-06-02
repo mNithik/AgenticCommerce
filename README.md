@@ -9,6 +9,9 @@ ProofSpend is a Next.js MVP for receipt-backed autonomous diligence. A user subm
 - supports `mock` mode by default for local work and CI
 - supports pluggable LLM providers for summarization and analyst synthesis
 - shows a live timeline, spend tracker, memo, and evidence table in one dashboard
+- exports completed runs as proof packets in JSON or Markdown
+- stores the last 10 completed runs locally for quick reopen
+- lets you click memo claims to trace them back to evidence rows and receipts
 
 ## Modes
 
@@ -109,6 +112,8 @@ Most important values:
 - `MOCK_X402`
 - `AGENT_WALLET_KEY`
 - `LLM_PROVIDER`
+- `POLICY_PROFILE`
+- `DEFAULT_PAID_CALL_COST_USD`
 - `NVIDIA_API_KEY`
 - `OPENAI_API_KEY`
 - `HF_TOKEN`
@@ -124,14 +129,50 @@ Most important values:
 | `npm run setup:check` | Validate local prerequisites and env basics |
 | `npm run smoke:llm` | Check the active LLM provider setup |
 | `npm run smoke:search` | Exercise one live paid search path |
+| `npm run probe:awal` | Inspect raw live awal payment headers for receipt debugging |
 
 ## SafeSpend guardrails
 
+- blocks sensitive queries that contain likely PII before payment
+- batch-checks the planned primary run before the first paid call
 - blocks over-budget paid calls before payment
 - blocks duplicate normalized queries
 - blocks duplicate receipts
 - caps paid calls at 4 per run
 - redacts sensitive fragments from user-visible query previews
+
+## API surface
+
+### `POST /api/run-diligence`
+
+Request body:
+
+```json
+{
+  "question": "Should I spend $500 per month on Apollo.io for B2B lead generation for my early-stage SaaS startup?",
+  "budgetCapUsd": 0.25,
+  "policyProfile": "standard",
+  "callbackUrl": "https://example.com/webhook"
+}
+```
+
+Notes:
+
+- response is `text/event-stream`
+- `policyProfile` supports `standard` and `strict`
+- `callbackUrl` is optional and receives the final `DiligenceRun` JSON as a best-effort POST after completion
+
+### `GET /api/health`
+
+Returns a small JSON health payload with the active payment mode, policy profile, and configured LLM provider.
+
+## Demo flow
+
+1. Start in mock mode to verify the UI and export flow.
+2. Switch to live mode in WSL if your Windows `awal` bridge is unreliable.
+3. Run the Apollo.io example question.
+4. Click a memo claim to trace it to the evidence row and receipt.
+5. Export the proof packet in Markdown or JSON.
 
 ## Project structure
 
@@ -143,8 +184,12 @@ app/
 components/
   AgentTimeline.tsx
   EvidenceTable.tsx
+  ExportProofPacket.tsx
   MemoView.tsx
+  MockWatermark.tsx
   ModeBadge.tsx
+  RunHistory.tsx
+  SafeSpendPanel.tsx
   RunForm.tsx
   SpendTracker.tsx
 lib/
@@ -160,9 +205,11 @@ lib/
   x402-search.ts
 scripts/
   check-prerequisites.mjs
+  probe-awal.mjs
   smoke-llm.mjs
   smoke-search.mjs
 test/
+  proof-packet.test.ts
   safespend.test.ts
 ```
 

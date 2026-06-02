@@ -4,6 +4,7 @@ import { deterministicProvider } from "./deterministic";
 import type { AnalystOutput, LLMProviderName } from "../types";
 import type { AnalystInput, LLMProvider, SummaryInput } from "./provider";
 import { clamp, makeId, unique } from "../utils";
+import type { AgentName, MemoClaim, Recommendation } from "../types";
 
 type Options = {
   name: LLMProviderName;
@@ -83,6 +84,100 @@ function sanitizeClaimWithFallback(
     recordIds: unique(resolved?.recordIds ?? fallbackClaim?.recordIds ?? []).filter(Boolean),
     sourceUrls: unique(resolved?.sourceUrls ?? fallbackClaim?.sourceUrls ?? []).filter(Boolean),
   };
+}
+
+function sourceCatalog(input: AnalystInput) {
+  const validRecordIds = new Set(input.records.map((record) => record.id));
+  const validSourceUrls = new Set(
+    input.records.flatMap((record) => record.sources.map((source) => source.url)),
+  );
+  const recordsByAgent = new Map<AgentName, AnalystInput["records"][number][]>();
+
+  for (const record of input.records) {
+    const current = recordsByAgent.get(record.agent) ?? [];
+    current.push(record);
+    recordsByAgent.set(record.agent, current);
+  }
+
+  return { validRecordIds, validSourceUrls, recordsByAgent };
+}
+
+function filterClaimToCatalog(
+  claim: MemoClaim,
+  catalog: ReturnType<typeof sourceCatalog>,
+  fallbackClaim?: MemoClaim,
+) {
+  const recordIds = unique(
+    claim.recordIds.filter((recordId) => catalog.validRecordIds.has(recordId)),
+  );
+  const fallbackRecordIds = unique(
+    (fallbackClaim?.recordIds ?? []).filter((recordId) => catalog.validRecordIds.has(recordId)),
+  );
+  const sourceUrls = unique(
+    claim.sourceUrls.filter((url) => catalog.validSourceUrls.has(url)),
+  );
+  const fallbackSourceUrls = unique(
+    (fallbackClaim?.sourceUrls ?? []).filter((url) => catalog.validSourceUrls.has(url)),
+  );
+
+  return {
+    ...claim,
+    recordIds: recordIds.length ? recordIds : fallbackRecordIds,
+    sourceUrls: sourceUrls.length ? sourceUrls : fallbackSourceUrls,
+  };
+}
+
+function isPlaceholderClaim(claim: MemoClaim | undefined, kind: "strength" | "concern" | "nextStep") {
+  if (!claim) {
+    return true;
+  }
+
+  const pattern =
+    kind === "strength"
+      ? /^Strength \d+$/i
+      : kind === "concern"
+        ? /^Concern \d+$/i
+        : /^Next step \d+$/i;
+  return !claim.claimText.trim() || pattern.test(claim.claimText.trim());
+}
+
+function buildFallbackClaimFromRecord(
+  input: AnalystInput,
+  recordId: string | undefined,
+  label: string,
+) {
+  const record = input.records.find((item) => item.id === recordId);
+  if (!record) {
+    return undefined;
+  }
+
+  return {
+    id: makeId("claim", `${record.id}_${label}`),
+    claimText: record.finding,
+    recordIds: [record.id],
+    sourceUrls: unique(record.sources.slice(0, 2).map((source) => source.url)),
+  };
+}
+
+function inferRecommendation(
+  current: Recommendation,
+  confidence: number,
+  strengths: MemoClaim[],
+  concerns: MemoClaim[],
+) {
+  if (concerns.length >= strengths.length && concerns.length > 0) {
+    return confidence >= 0.65 ? "do_not_buy" : "need_more_evidence";
+  }
+
+  if (concerns.length > 0 && current === "buy" && confidence < 0.85) {
+    return "need_more_evidence";
+  }
+
+  if (strengths.length > concerns.length + 1 && confidence >= 0.7) {
+    return "buy";
+  }
+
+  return current;
 }
 
 export class OpenAICompatibleProvider implements LLMProvider {
@@ -244,6 +339,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       parsed = {};
     }
 
+    const catalog = sourceCatalog(input);
     const fallbackRationaleText =
       typeof parsed.rationale === "string"
         ? parsed.rationale
@@ -264,49 +360,119 @@ export class OpenAICompatibleProvider implements LLMProvider {
         ? await deterministicProvider.synthesizeAnalystOutput(input)
         : undefined;
 
-    return {
-      recommendation:
-        parsed.recommendation === "buy" ||
-        parsed.recommendation === "do_not_buy" ||
-        parsed.recommendation === "need_more_evidence"
-          ? parsed.recommendation
-          : (fallbackOutput?.recommendation ?? "need_more_evidence"),
-      confidence: clamp(parsed.confidence ?? fallbackOutput?.confidence ?? 0.5, 0, 1),
-      rationale: sanitizeClaimWithFallback(
+    const strengthClaims = (parsed.strengths ?? [])
+      .slice(0, 3)
+      .map((claim, index) =>
+        sanitizeClaimWithFallback(
+          claim,
+          fallbackOutput?.strengths[index],
+          fallbackOutput?.strengths[index]?.claimText ?? `Strength ${index + 1}`,
+        ),
+      )
+      .map((claim, index) =>
+        filterClaimToCatalog(
+          claim,
+          catalog,
+          fallbackOutput?.strengths[index],
+        ),
+      )
+      .filter((claim) => !isPlaceholderClaim(claim, "strength"));
+
+    const concernClaims = (parsed.concerns?.length ? parsed.concerns : fallbackOutput?.concerns ?? [])
+      .slice(0, 3)
+      .map((claim, index) =>
+        sanitizeClaimWithFallback(
+          claim,
+          fallbackOutput?.concerns[index],
+          fallbackOutput?.concerns[index]?.claimText ?? `Concern ${index + 1}`,
+        ),
+      )
+      .map((claim, index) =>
+        filterClaimToCatalog(
+          claim,
+          catalog,
+          fallbackOutput?.concerns[index],
+        ),
+      )
+      .filter((claim) => !isPlaceholderClaim(claim, "concern"));
+
+    const nextStepClaims = (parsed.nextSteps?.length ? parsed.nextSteps : fallbackOutput?.nextSteps ?? [])
+      .slice(0, 3)
+      .map((claim, index) =>
+        sanitizeClaimWithFallback(
+          claim,
+          fallbackOutput?.nextSteps[index],
+          fallbackOutput?.nextSteps[index]?.claimText ?? `Next step ${index + 1}`,
+        ),
+      )
+      .map((claim, index) =>
+        filterClaimToCatalog(
+          claim,
+          catalog,
+          fallbackOutput?.nextSteps[index],
+        ),
+      )
+      .filter((claim) => !isPlaceholderClaim(claim, "nextStep"));
+
+    const sanitizedRationale = filterClaimToCatalog(
+      sanitizeClaimWithFallback(
         typeof parsed.rationale === "object" ? parsed.rationale : undefined,
         fallbackOutput?.rationale,
         fallbackOutput?.rationale.claimText ?? fallbackRationaleText,
       ),
-      strengths:
-        (parsed.strengths?.length ? parsed.strengths : fallbackOutput?.strengths ?? [])
-          .slice(0, 3)
-          .map((claim, index) =>
-            sanitizeClaimWithFallback(
-              claim,
-              fallbackOutput?.strengths[index],
-              fallbackOutput?.strengths[index]?.claimText ?? `Strength ${index + 1}`,
-            ),
-          ),
-      concerns:
-        (parsed.concerns?.length ? parsed.concerns : fallbackOutput?.concerns ?? [])
-          .slice(0, 3)
-          .map((claim, index) =>
-            sanitizeClaimWithFallback(
-              claim,
-              fallbackOutput?.concerns[index],
-              fallbackOutput?.concerns[index]?.claimText ?? `Concern ${index + 1}`,
-            ),
-          ),
-      nextSteps:
-        (parsed.nextSteps?.length ? parsed.nextSteps : fallbackOutput?.nextSteps ?? [])
-          .slice(0, 3)
-          .map((claim, index) =>
-            sanitizeClaimWithFallback(
-              claim,
-              fallbackOutput?.nextSteps[index],
-              fallbackOutput?.nextSteps[index]?.claimText ?? `Next step ${index + 1}`,
-            ),
-          ),
+      catalog,
+      fallbackOutput?.rationale,
+    );
+
+    const repairedStrengths =
+      strengthClaims.length > 0
+        ? strengthClaims
+        : input.records
+            .filter((record) => record.agent === "Market" || record.agent === "Evidence")
+            .slice(0, 2)
+            .map((record, index) =>
+              buildFallbackClaimFromRecord(input, record.id, `strength_${index}`),
+            )
+            .filter(Boolean) as MemoClaim[];
+
+    const repairedConcerns =
+      concernClaims.length > 0
+        ? concernClaims
+        : input.records
+            .filter((record) => record.agent === "Counter" || record.agent === "Skeptic")
+            .slice(0, 2)
+            .map((record, index) =>
+              buildFallbackClaimFromRecord(input, record.id, `concern_${index}`),
+            )
+            .filter(Boolean) as MemoClaim[];
+
+    const repairedNextSteps =
+      nextStepClaims.length > 0
+        ? nextStepClaims
+        : (fallbackOutput?.nextSteps ?? []).map((claim) =>
+            filterClaimToCatalog(claim, catalog, fallbackOutput?.nextSteps[0]),
+          );
+
+    const baseRecommendation =
+      parsed.recommendation === "buy" ||
+      parsed.recommendation === "do_not_buy" ||
+      parsed.recommendation === "need_more_evidence"
+        ? parsed.recommendation
+        : (fallbackOutput?.recommendation ?? "need_more_evidence");
+    const confidence = clamp(parsed.confidence ?? fallbackOutput?.confidence ?? 0.5, 0, 1);
+
+    return {
+      recommendation: inferRecommendation(
+        baseRecommendation,
+        confidence,
+        repairedStrengths,
+        repairedConcerns,
+      ),
+      confidence,
+      rationale: sanitizedRationale,
+      strengths: repairedStrengths,
+      concerns: repairedConcerns,
+      nextSteps: repairedNextSteps,
     };
   }
 }

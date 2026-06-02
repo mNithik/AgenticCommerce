@@ -48,8 +48,27 @@ const { stdout } = await awalExec([
   maxAmount,
   "--json",
 ]);
-
-console.log(stdout);
+const parsed = JSON.parse(stdout);
+const bodyResult = parsed.body ?? parsed.data ?? parsed.response ?? parsed.result ?? parsed;
+const results = Array.isArray(bodyResult.results) ? bodyResult.results : [];
+console.log(
+  JSON.stringify(
+    {
+      status: parsed.status ?? 200,
+      statusText: parsed.statusText ?? "OK",
+      receiptPresent: Boolean(stdout.includes("PAYMENT-RESPONSE") || stdout.includes("payment-response")),
+      resultCount: results.length,
+      firstResult: results[0]
+        ? {
+            title: results[0].title,
+            url: results[0].url,
+          }
+        : null,
+    },
+    null,
+    2,
+  ),
+);
 function awalExec(commandArgs) {
   if (process.platform === "win32") {
     return exec("cmd.exe", ["/d", "/s", "/c", "npx", ...commandArgs], {

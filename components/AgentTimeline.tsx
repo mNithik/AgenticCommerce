@@ -3,7 +3,7 @@ import type { RunEvent } from "../lib/types";
 function renderEvent(event: RunEvent) {
   switch (event.type) {
     case "run_started":
-      return `Run started in ${event.paymentMode} mode with ${event.llmProvider}.`;
+      return `Run started in ${event.paymentMode} mode with ${event.llmProvider} using the ${event.policyProfile} policy profile.`;
     case "agent_started":
       return `${event.agent} researching: ${event.queryPreview}`;
     case "payment_settled":

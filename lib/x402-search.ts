@@ -11,6 +11,12 @@ type PaidSearchResult = {
   provider: "Tavily x402" | "Tavily x402 (mock)";
 };
 
+export function estimatePaidSearchCostUsd() {
+  return Number.isFinite(config.defaultPaidCallCostUsd)
+    ? config.defaultPaidCallCostUsd
+    : 0.01;
+}
+
 function findFirstString(
   value: unknown,
   keys: string[],
@@ -259,7 +265,7 @@ async function livePaidSearch(params: {
   return {
     sources: parsed.results,
     receipt: parsed.receipt,
-    costUsd: parsed.costUsd || 0.01,
+    costUsd: parsed.costUsd || estimatePaidSearchCostUsd(),
     paymentMode: "live",
     provider: "Tavily x402",
   };
