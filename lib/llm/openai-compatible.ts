@@ -16,6 +16,19 @@ function cleanJson(value: string) {
   return value.replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
 }
 
+// Models sometimes prepend prose before the JSON (e.g. "Here are the claims: ```json [...]").
+// Pull out the first balanced array/object span so JSON.parse sees only the JSON.
+function extractJsonBlock(value: string) {
+  const cleaned = cleanJson(value);
+  const starts = [cleaned.indexOf("["), cleaned.indexOf("{")].filter((index) => index >= 0);
+  if (starts.length === 0) {
+    return cleaned;
+  }
+  const start = Math.min(...starts);
+  const end = Math.max(cleaned.lastIndexOf("]"), cleaned.lastIndexOf("}"));
+  return end > start ? cleaned.slice(start, end + 1) : cleaned;
+}
+
 function heuristicScore(text: string, positive: string[], negative: string[]) {
   const lower = text.toLowerCase();
   let score = 0.5;
@@ -130,7 +143,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     let claims: FindingClaim[] = [];
     try {
-      const parsed = JSON.parse(cleanJson(output)) as unknown;
+      const parsed = JSON.parse(extractJsonBlock(output)) as unknown;
       const arr = Array.isArray(parsed)
         ? parsed
         : Array.isArray((parsed as { claims?: unknown[] })?.claims)
@@ -243,7 +256,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       },
     ]);
 
-    const parsed = JSON.parse(cleanJson(output)) as AnalystOutput;
+    const parsed = JSON.parse(extractJsonBlock(output)) as AnalystOutput;
 
     const sanitizeClaim = (claim: unknown, fallback: string) => {
       // Models sometimes return a claim as a bare string instead of an object.
