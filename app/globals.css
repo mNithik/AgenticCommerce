@@ -1,0 +1,40 @@
+:root {
+  --bg: #f4efe6;
+  --paper: rgba(255, 252, 247, 0.88);
+  --ink: #18211b;
+  --muted: #5d665f;
+  --line: rgba(24, 33, 27, 0.12);
+  --accent: #0f766e;
+  --accent-strong: #115e59;
+  --warn: #b45309;
+  --danger: #b42318;
+  --shadow: 0 20px 70px rgba(31, 41, 55, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background:
+    radial-gradient(circle at top left, rgba(15, 118, 110, 0.12), transparent 30%),
+    linear-gradient(180deg, #f6f1e8, #ece4d4);
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", serif;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+}
