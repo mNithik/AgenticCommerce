@@ -14,7 +14,7 @@ type PaidSearchResult = {
   provider: "Tavily x402" | "Tavily x402 (mock)";
 };
 
-function parseAwalJson(raw: string) {
+export function parseAwalJson(raw: string) {
   const root = JSON.parse(raw) as Record<string, unknown>;
   const bodyCandidates = [
     root.body,
