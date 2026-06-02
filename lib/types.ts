@@ -105,6 +105,12 @@ export type RunEvent =
       spentUsd: number;
     }
   | {
+      type: "search_failed";
+      agent: AgentName;
+      query: string;
+      reason: string;
+    }
+  | {
       type: "run_error";
       message: string;
       agent?: AgentName;

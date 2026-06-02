@@ -12,6 +12,8 @@ function renderEvent(event: RunEvent) {
       return `${event.agent} completed with finding: ${event.record.finding}`;
     case "policy_blocked":
       return `${event.agent} blocked: ${event.reason}`;
+    case "search_failed":
+      return `${event.agent} search skipped (${event.query}): ${event.reason}`;
     case "run_error":
       return `Run error: ${event.message}`;
     case "complete":

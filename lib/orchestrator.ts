@@ -65,70 +65,81 @@ async function runAgent(params: {
       continue;
     }
 
-    const payment = await paidSearch({
-      agent: params.definition.name,
-      query,
-      runId: params.runId,
-      callIndex: params.state.paidCalls + 1,
-      subject: params.subject,
-    });
-
-    const receiptCheck = params.safeSpend.recordReceipt(
-      params.definition.name,
-      payment.receipt,
-    );
-
-    if (receiptCheck.status === "blocked") {
-      params.emit({
-        type: "policy_blocked",
+    // A single search failing (payment rejected, network, LLM error) must not
+    // kill the run — note it and move on to the next query/agent.
+    try {
+      const payment = await paidSearch({
         agent: params.definition.name,
-        reason: receiptCheck.reason,
-        spentUsd: params.state.spentUsd,
+        query,
+        runId: params.runId,
+        callIndex: params.state.paidCalls + 1,
+        subject: params.subject,
       });
-      continue;
+
+      const receiptCheck = params.safeSpend.recordReceipt(
+        params.definition.name,
+        payment.receipt,
+      );
+
+      if (receiptCheck.status === "blocked") {
+        params.emit({
+          type: "policy_blocked",
+          agent: params.definition.name,
+          reason: receiptCheck.reason,
+          spentUsd: params.state.spentUsd,
+        });
+        continue;
+      }
+
+      params.emit({
+        type: "payment_settled",
+        agent: params.definition.name,
+        receipt: payment.receipt,
+        costUsd: payment.costUsd,
+        paymentMode: payment.paymentMode,
+      });
+
+      const finding = await params.provider.summarizeFinding({
+        agent: params.definition.name,
+        subject: params.subject,
+        query,
+        sources: payment.sources,
+      });
+
+      const record: EvidenceRecord = {
+        id: makeId("rec", `${params.runId}_${params.definition.name}_${query}`),
+        agent: params.definition.name,
+        query,
+        normalizedQuery: normalizeQuery(query),
+        provider: payment.provider,
+        paymentMode: payment.paymentMode,
+        costUsd: payment.costUsd,
+        receipt: payment.receipt,
+        finding,
+        sources: payment.sources,
+        policyStatus: "allowed",
+      };
+
+      params.state.records.push(record);
+      params.state.spentUsd += payment.costUsd;
+      params.state.paidCalls += 1;
+      produced.push(record);
+
+      params.emit({
+        type: "agent_completed",
+        agent: params.definition.name,
+        record,
+        spentUsd: params.state.spentUsd,
+        paidCalls: params.state.paidCalls,
+      });
+    } catch (error) {
+      params.emit({
+        type: "search_failed",
+        agent: params.definition.name,
+        query,
+        reason: error instanceof Error ? error.message : "Unknown search error.",
+      });
     }
-
-    params.emit({
-      type: "payment_settled",
-      agent: params.definition.name,
-      receipt: payment.receipt,
-      costUsd: payment.costUsd,
-      paymentMode: payment.paymentMode,
-    });
-
-    const finding = await params.provider.summarizeFinding({
-      agent: params.definition.name,
-      subject: params.subject,
-      query,
-      sources: payment.sources,
-    });
-
-    const record: EvidenceRecord = {
-      id: makeId("rec", `${params.runId}_${params.definition.name}_${query}`),
-      agent: params.definition.name,
-      query,
-      normalizedQuery: normalizeQuery(query),
-      provider: payment.provider,
-      paymentMode: payment.paymentMode,
-      costUsd: payment.costUsd,
-      receipt: payment.receipt,
-      finding,
-      sources: payment.sources,
-      policyStatus: "allowed",
-    };
-
-    params.state.records.push(record);
-    params.state.spentUsd += payment.costUsd;
-    params.state.paidCalls += 1;
-    produced.push(record);
-
-    params.emit({
-      type: "agent_completed",
-      agent: params.definition.name,
-      record,
-      spentUsd: params.state.spentUsd,
-      paidCalls: params.state.paidCalls,
-    });
   }
 
   return produced;
@@ -163,16 +174,34 @@ export async function runDiligence({
   const primaryAgents = [marketAgent, evidenceAgent, counterAgent];
 
   for (const definition of primaryAgents) {
-    await runAgent({
-      definition,
-      question,
-      subject,
-      runId,
-      safeSpend,
-      provider,
-      state,
-      emit,
-    });
+    try {
+      await runAgent({
+        definition,
+        question,
+        subject,
+        runId,
+        safeSpend,
+        provider,
+        state,
+        emit,
+      });
+    } catch (error) {
+      // An unexpected agent-level failure shouldn't abort the other agents.
+      emit({
+        type: "search_failed",
+        agent: definition.name,
+        query: `${definition.name} agent`,
+        reason: error instanceof Error ? error.message : "Unknown agent error.",
+      });
+    }
+  }
+
+  // If every search failed, there's nothing to synthesize — surface a single
+  // terminal error (the API route turns a throw into one `run_error` event).
+  if (state.records.length === 0) {
+    throw new Error(
+      "No evidence could be gathered — every paid search failed. Check the wallet/network or widen the budget.",
+    );
   }
 
   // Aggregate every record an agent produced (now multiple per agent) before scoring.
