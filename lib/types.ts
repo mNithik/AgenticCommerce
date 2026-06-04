@@ -55,6 +55,65 @@ export type AnalystOutput = {
   nextSteps: MemoClaim[];
 };
 
+export type HealthStatusResponse = {
+  ok: true;
+  app: "ProofSpend";
+  paymentMode: PaymentMode;
+  policyProfile: PolicyProfile;
+  llmProvider: LLMProviderName;
+  mockX402: boolean;
+  liveConfigured: boolean;
+  walletConfigured: boolean;
+  searchReady: boolean;
+  snapshotSigningAvailable: boolean;
+  readinessSummary: string;
+  estimatedPaidCallCostUsd: number;
+  estimatedBaselineCalls: number;
+  estimatedMaxCalls: number;
+  uptimeSeconds: number;
+  rateLimits: Record<string, { limit: number; windowMs: number }>;
+  recentWebhookDeliveries: WebhookDeliveryStatus[];
+};
+
+export type WebhookDeliveryStatus = {
+  id: string;
+  runId?: string;
+  callbackUrl: string;
+  status: "delivered" | "failed" | "skipped";
+  attempts: number;
+  deliveredAt: string;
+  httpStatus?: number;
+  error?: string;
+};
+
+export type ScheduleTemplate = {
+  id: string;
+  label: string;
+  question: string;
+  budgetCapUsd: number;
+  policyProfile: PolicyProfile;
+  callbackUrl?: string;
+  intervalMinutes: number;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  nextRunAt: string;
+  lastRunAt?: string;
+  lastRunId?: string;
+  lastStatus?: "success" | "failed";
+  lastError?: string;
+};
+
+export type ObservabilityEvent = {
+  id: string;
+  category: "run" | "webhook" | "schedule" | "verify" | "mcp";
+  status: "info" | "success" | "error";
+  message: string;
+  timestamp: string;
+  relatedId?: string;
+  metadata?: Record<string, string | number | boolean | null>;
+};
+
 export type DiligenceRun = {
   id: string;
   input: string;
@@ -71,17 +130,48 @@ export type DiligenceRun = {
   memo: string;
   analystOutput: AnalystOutput;
   safeSpendLog: SafeSpendEvent[];
+  webhookDelivery?: WebhookDeliveryStatus;
 };
 
 export type ProofPacketMetadata = {
   exportedAt: string;
   appName: "ProofSpend";
-  exportFormatVersion: 1;
+  exportFormatVersion: 2;
+  attestation: ProofAttestation;
 };
 
 export type ProofPacketJson = {
   metadata: ProofPacketMetadata;
   run: DiligenceRun;
+};
+
+export type ProofAttestation = {
+  formatVersion: 1;
+  canonicalizer: "proofspend.run.v1";
+  digestAlgorithm: "SHA-256";
+  digest: string;
+  signedAt: string;
+  signingMode: "digest-only" | "hmac-sha256";
+  signature?: string;
+  keyId?: string;
+};
+
+export type SnapshotEnvelope = {
+  version: 2;
+  createdAt: string;
+  run: DiligenceRun;
+  attestation: ProofAttestation;
+};
+
+export type ProofVerificationResult = {
+  ok: true;
+  verified: boolean;
+  digestMatch: boolean;
+  signatureMatch: boolean | null;
+  signingMode: ProofAttestation["signingMode"] | "unknown";
+  runId: string | null;
+  subject: string | null;
+  message: string;
 };
 
 export type RunEvent =
@@ -129,6 +219,10 @@ export type RunEvent =
       type: "run_error";
       message: string;
       agent?: AgentName;
+    }
+  | {
+      type: "webhook_delivery";
+      delivery: WebhookDeliveryStatus;
     }
   | {
       type: "complete";

@@ -8,9 +8,13 @@ function env(name: string): string | undefined {
 export const config = {
   mockX402: env("MOCK_X402") !== "false",
   tavilyX402Url: env("TAVILY_X402_URL") ?? "https://x402.tavily.com/search",
+  apiAuthKey: env("PROOFSPEND_API_KEY"),
   agentWalletKey: env("AGENT_WALLET_KEY"),
   awalMaxAmount: env("AWAL_MAX_AMOUNT") ?? "20000",
   defaultPaidCallCostUsd: Number(env("DEFAULT_PAID_CALL_COST_USD") ?? "0.01"),
+  webhookSecret: env("WEBHOOK_SECRET"),
+  webhookMaxAttempts: Number(env("WEBHOOK_MAX_ATTEMPTS") ?? "3"),
+  proofSigningSecret: env("PROOFSPEND_SIGNING_SECRET"),
   llmProvider: (env("LLM_PROVIDER") ?? "nvidia") as LLMProviderName,
   policyProfile: (env("POLICY_PROFILE") ?? "standard") as PolicyProfile,
   nvidiaApiKey: env("NVIDIA_API_KEY"),

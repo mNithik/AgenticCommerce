@@ -288,10 +288,5 @@ export async function runDiligence({
     safeSpendLog: safeSpend.getEvents(),
   };
 
-  emit({
-    type: "complete",
-    run,
-  });
-
   return run;
 }

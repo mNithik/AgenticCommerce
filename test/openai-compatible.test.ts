@@ -97,4 +97,84 @@ describe("OpenAICompatibleProvider", () => {
     expect(output.rationale.sourceUrls).not.toContain("https://bad.example");
     expect(output.recommendation).toBe("need_more_evidence");
   });
+
+  it("normalizes verbose summary-style claims into concise memo text", async () => {
+    const provider = new OpenAICompatibleProvider({
+      name: "nvidia",
+      summaryModel: "test-summary",
+      analystModel: "test-analyst",
+    });
+
+    (provider as any).complete = async () =>
+      JSON.stringify({
+        recommendation: "need_more_evidence",
+        confidence: 0.6,
+        rationale: {
+          claimText:
+            "Here's a concise evidence summary: Apollo.io appears promising for SMB outbound teams. However, data quality and compliance concerns still need validation before a confident buy recommendation.",
+          recordIds: ["record_market"],
+          sourceUrls: ["https://valid.example/market"],
+        },
+        strengths: [
+          {
+            claimText:
+              "Based on the provided sources, Apollo.io has broad market awareness and a strong contact database. It is often shortlisted by sales teams.",
+            recordIds: ["record_market"],
+            sourceUrls: ["https://valid.example/market"],
+          },
+        ],
+        concerns: [
+          {
+            claimText:
+              "Here is a concise evidence summary: Users still report bounce-rate and privacy concerns. That risk could erode outbound ROI.",
+            recordIds: ["record_counter"],
+            sourceUrls: ["https://valid.example/counter"],
+          },
+        ],
+        nextSteps: [
+          {
+            claimText:
+              "In summary: Run a limited trial and review contract terms before committing.",
+            recordIds: ["record_market"],
+            sourceUrls: ["https://valid.example/market"],
+          },
+        ],
+      });
+
+    const output = await provider.synthesizeAnalystOutput({
+      question: "Should I buy Apollo.io?",
+      subject: "Apollo.io",
+      records: [
+        {
+          id: "record_market",
+          agent: "Market",
+          finding: "Apollo.io sits in a large and growing category.",
+          sources: [
+            {
+              title: "Market report",
+              url: "https://valid.example/market",
+              snippet: "Large category",
+            },
+          ],
+        },
+        {
+          id: "record_counter",
+          agent: "Counter",
+          finding: "There are lawsuits and data-quality complaints.",
+          sources: [
+            {
+              title: "Counter report",
+              url: "https://valid.example/counter",
+              snippet: "Risk signal",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(output.rationale.claimText).not.toMatch(/concise evidence summary/i);
+    expect(output.strengths[0].claimText).not.toMatch(/based on the provided sources/i);
+    expect(output.concerns[0].claimText).not.toMatch(/concise evidence summary/i);
+    expect(output.nextSteps[0].claimText).not.toMatch(/in summary/i);
+  });
 });

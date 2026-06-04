@@ -12,30 +12,28 @@ import {
   runToHistoryRow,
   safeSpendToRows,
 } from "../lib/dashboard-adapters";
+import { DEMO_QUESTION, EXAMPLE_QUESTIONS } from "../lib/example-questions";
 import {
   buildProofPacketFilename,
   buildProofPacketJson,
   buildProofPacketMarkdown,
 } from "../lib/proof-packet";
-import { deserializeRunSnapshot, serializeRunSnapshot } from "../lib/run-sharing";
-import type { DiligenceRun, PolicyProfile, RunEvent } from "../lib/types";
+import {
+  deserializeRunSnapshot,
+  parseRunSnapshot,
+  serializeRunSnapshot,
+} from "../lib/run-sharing";
+import type {
+  DiligenceRun,
+  HealthStatusResponse,
+  ObservabilityEvent,
+  PolicyProfile,
+  ProofAttestation,
+  RunEvent,
+  ScheduleTemplate,
+} from "../lib/types";
 
 const HISTORY_KEY = "proofspend.runHistory.v1";
-
-const EXAMPLE_QUESTIONS = [
-  {
-    short: "Apollo.io lead gen",
-    full: "Should I spend $500 per month on Apollo.io for B2B lead generation for my early-stage SaaS startup?",
-  },
-  {
-    short: "HubSpot Enterprise",
-    full: "Should I buy HubSpot Enterprise for our 20-person sales team?",
-  },
-  {
-    short: "LeadMagic",
-    full: "Should we switch to LeadMagic for AI-powered lead enrichment at $99/seat?",
-  },
-];
 
 async function consumeSSE(
   response: Response,
@@ -83,10 +81,41 @@ function downloadFile(filename: string, content: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
+function summarizeFailure(events: RunEvent[], run: DiligenceRun | null) {
+  if (run || events.length === 0) {
+    return null;
+  }
+
+  const failed = events.filter((event) => event.type === "search_failed");
+  const blocked = events.filter((event) => event.type === "policy_blocked");
+  const runError = [...events].reverse().find((event) => event.type === "run_error");
+
+  if (failed.length === 0 && blocked.length === 0 && !runError) {
+    return null;
+  }
+
+  const parts = [
+    failed.length > 0 ? `${failed.length} search failure${failed.length === 1 ? "" : "s"}` : null,
+    blocked.length > 0 ? `${blocked.length} policy block${blocked.length === 1 ? "" : "s"}` : null,
+  ].filter((part): part is string => Boolean(part));
+
+  if (runError) {
+    return runError.message;
+  }
+
+  const firstReason =
+    failed[0]?.reason ??
+    blocked[0]?.reason ??
+    "No evidence records were collected for this run.";
+
+  return `${parts.join(" and ")} prevented evidence collection. ${firstReason}`;
+}
+
 export function RunForm() {
-  const [question, setQuestion] = useState(EXAMPLE_QUESTIONS[0].full);
+  const [question, setQuestion] = useState<string>(DEMO_QUESTION);
   const [budgetCapUsd, setBudgetCapUsd] = useState(0.25);
   const [policyProfile, setPolicyProfile] = useState<PolicyProfile>("standard");
+  const [callbackUrl, setCallbackUrl] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [run, setRun] = useState<DiligenceRun | null>(null);
@@ -94,6 +123,10 @@ export function RunForm() {
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
   const [history, setHistory] = useState<DiligenceRun[]>([]);
   const [compareRunId, setCompareRunId] = useState("");
+  const [health, setHealth] = useState<HealthStatusResponse | null>(null);
+  const [healthUnavailable, setHealthUnavailable] = useState(false);
+  const [schedules, setSchedules] = useState<ScheduleTemplate[]>([]);
+  const [observabilityEvents, setObservabilityEvents] = useState<ObservabilityEvent[]>([]);
 
   const spentUsd =
     run?.spentUsd ??
@@ -105,8 +138,67 @@ export function RunForm() {
     events.filter((event) => event.type === "payment_settled").length;
   const mode = paymentModeToUi(
     run?.paymentMode ??
-      (events.find((event) => event.type === "run_started")?.paymentMode ?? null),
+      (events.find((event) => event.type === "run_started")?.paymentMode ??
+        health?.paymentMode ??
+        null),
   );
+
+  async function refreshHealth() {
+    try {
+      const response = await fetch("/api/health");
+      if (!response.ok) {
+        throw new Error("Health request failed.");
+      }
+
+      const payload = (await response.json()) as HealthStatusResponse;
+      setHealth(payload);
+      setHealthUnavailable(false);
+    } catch {
+      setHealthUnavailable(true);
+    }
+  }
+
+  async function refreshSchedules() {
+    try {
+      const response = await fetch("/api/schedules");
+      if (!response.ok) {
+        return;
+      }
+      const payload = (await response.json()) as ScheduleTemplate[];
+      setSchedules(payload);
+    } catch {
+      // Keep schedules best-effort for local UI.
+    }
+  }
+
+  async function refreshObservability() {
+    try {
+      const response = await fetch("/api/observability");
+      if (!response.ok) {
+        return;
+      }
+      const payload = (await response.json()) as ObservabilityEvent[];
+      setObservabilityEvents(payload);
+    } catch {
+      // Keep observability best-effort for local UI.
+    }
+  }
+
+  useEffect(() => {
+    void refreshHealth();
+    void refreshSchedules();
+    void refreshObservability();
+  }, []);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void refreshHealth();
+      void refreshSchedules();
+      void refreshObservability();
+    }, 30000);
+
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     try {
@@ -121,31 +213,6 @@ export function RunForm() {
       }
     } catch {
       window.localStorage.removeItem(HISTORY_KEY);
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
-      const url = new URL(window.location.href);
-      const snapshot = url.searchParams.get("snapshot");
-      if (!snapshot) {
-        return;
-      }
-
-      const restoredRun = deserializeRunSnapshot(snapshot);
-      if (!restoredRun) {
-        return;
-      }
-
-      setRun(restoredRun);
-      setQuestion(restoredRun.input);
-      setBudgetCapUsd(restoredRun.budgetCapUsd);
-      setPolicyProfile(restoredRun.policyProfile);
-      saveRunToHistory(restoredRun);
-      url.searchParams.delete("snapshot");
-      window.history.replaceState({}, "", url.toString());
-    } catch {
-      // Ignore malformed snapshot links and keep the local app usable.
     }
   }, []);
 
@@ -164,6 +231,61 @@ export function RunForm() {
     });
   }
 
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      const snapshot = url.searchParams.get("snapshot");
+      if (!snapshot) {
+        return;
+      }
+
+      const restoredRun = deserializeRunSnapshot(snapshot);
+      if (!restoredRun) {
+        return;
+      }
+
+      const envelope = parseRunSnapshot(snapshot);
+      if (envelope) {
+        void (async () => {
+          try {
+            const response = await fetch("/api/verify-proof", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ snapshot }),
+            });
+            if (!response.ok) {
+              return;
+            }
+            const payload = (await response.json()) as {
+              verified: boolean;
+              message: string;
+            };
+            if (payload.verified) {
+              toast.success(`Shared snapshot verified: ${payload.message}`);
+            } else {
+              setError(`Shared snapshot failed verification: ${payload.message}`);
+            }
+          } catch {
+            // Keep restored runs usable even if verification is unavailable.
+          }
+        })();
+      }
+
+      setRun(restoredRun);
+      setQuestion(restoredRun.input);
+      setBudgetCapUsd(restoredRun.budgetCapUsd);
+      setPolicyProfile(restoredRun.policyProfile);
+      setCallbackUrl("");
+      saveRunToHistory(restoredRun);
+      url.searchParams.delete("snapshot");
+      window.history.replaceState({}, "", url.toString());
+    } catch {
+      // Ignore malformed snapshot links and keep the local app usable.
+    }
+  }, []);
+
   function loadHistoryRun(runId: string) {
     const selectedRun = history.find((item) => item.id === runId);
     if (!selectedRun) {
@@ -177,12 +299,42 @@ export function RunForm() {
     setQuestion(selectedRun.input);
     setBudgetCapUsd(selectedRun.budgetCapUsd);
     setPolicyProfile(selectedRun.policyProfile);
+    setCallbackUrl("");
     setCompareRunId(history.find((item) => item.id !== selectedRun.id)?.id ?? "");
   }
 
-  async function handleRun() {
+  function clearHistory() {
+    window.localStorage.removeItem(HISTORY_KEY);
+    setHistory([]);
+    setCompareRunId("");
+    toast.success("Local run history cleared");
+  }
+
+  async function requestSnapshotSigning(currentRun: DiligenceRun) {
+    const response = await fetch("/api/sign-snapshot", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ run: currentRun }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Snapshot signing failed.");
+    }
+
+    return (await response.json()) as {
+      snapshot: string;
+      attestation: ProofAttestation;
+      signingAvailable: boolean;
+    };
+  }
+
+  async function submitRun(questionOverride?: string) {
+    const effectiveQuestion = (questionOverride ?? question).trim();
     setError(null);
-    if (!question.trim()) {
+
+    if (!effectiveQuestion) {
       setError("Enter a diligence question first.");
       return;
     }
@@ -190,11 +342,26 @@ export function RunForm() {
       setError("Budget cap must be greater than $0.");
       return;
     }
+    if (callbackUrl) {
+      try {
+        const parsed = new URL(callbackUrl);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          setError("Callback URL must use http or https.");
+          return;
+        }
+      } catch {
+        setError("Callback URL must be a valid URL.");
+        return;
+      }
+    }
 
     setIsRunning(true);
     setEvents([]);
     setRun(null);
     setSelectedRecordId(null);
+    if (questionOverride) {
+      setQuestion(questionOverride);
+    }
 
     try {
       const response = await fetch("/api/run-diligence", {
@@ -203,9 +370,10 @@ export function RunForm() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          question,
+          question: effectiveQuestion,
           budgetCapUsd,
           policyProfile,
+          callbackUrl: callbackUrl || undefined,
         }),
       });
 
@@ -219,10 +387,13 @@ export function RunForm() {
         if (incomingEvent.type === "complete") {
           setRun(incomingEvent.run);
           saveRunToHistory(incomingEvent.run);
+          void refreshHealth();
+          void refreshObservability();
         }
 
         if (incomingEvent.type === "run_error") {
           setError(incomingEvent.message);
+          void refreshObservability();
         }
       });
     } catch (submissionError) {
@@ -234,6 +405,113 @@ export function RunForm() {
     } finally {
       setIsRunning(false);
     }
+  }
+
+  async function handleCreateSchedule(intervalMinutes: number) {
+    const effectiveQuestion = question.trim();
+    if (!effectiveQuestion) {
+      toast.error("Enter a diligence question before saving a schedule.");
+      return;
+    }
+
+    const response = await fetch("/api/schedules", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        question: effectiveQuestion,
+        budgetCapUsd,
+        policyProfile,
+        callbackUrl: callbackUrl || undefined,
+        intervalMinutes,
+      }),
+    });
+
+    if (!response.ok) {
+      toast.error(await response.text());
+      return;
+    }
+
+    toast.success("Schedule created");
+    await refreshSchedules();
+    await refreshObservability();
+  }
+
+  async function handleDeleteSchedule(scheduleId: string) {
+    const response = await fetch(`/api/schedules/${scheduleId}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      toast.error(await response.text());
+      return;
+    }
+    toast.success("Schedule deleted");
+    await refreshSchedules();
+    await refreshObservability();
+  }
+
+  async function handleToggleSchedule(scheduleId: string, enabled: boolean) {
+    const response = await fetch(`/api/schedules/${scheduleId}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!response.ok) {
+      toast.error(await response.text());
+      return;
+    }
+    toast.success(enabled ? "Schedule enabled" : "Schedule paused");
+    await refreshSchedules();
+    await refreshObservability();
+  }
+
+  async function handleRunScheduleNow(scheduleId: string) {
+    const response = await fetch(`/api/schedules/${scheduleId}/run`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      toast.error(await response.text());
+      return;
+    }
+    toast.success("Scheduled diligence dispatched");
+    await refreshSchedules();
+    await refreshHealth();
+    await refreshObservability();
+  }
+
+  async function handleRetryWebhook(deliveryId: string) {
+    const response = await fetch("/api/webhooks/retry", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ deliveryId }),
+    });
+    if (!response.ok) {
+      toast.error(await response.text());
+      return;
+    }
+    toast.success("Webhook retry dispatched");
+    await refreshHealth();
+    await refreshObservability();
+  }
+
+  async function handleDemoRun() {
+    if (!health) {
+      toast.error("Wait for system status to load before starting the demo run.");
+      return;
+    }
+
+    if ((health?.paymentMode ?? mode) === "live") {
+      toast.error("Demo run is only available while mock mode is enabled.");
+      setQuestion(DEMO_QUESTION);
+      return;
+    }
+
+    await submitRun(DEMO_QUESTION);
   }
 
   const historyRows = useMemo(() => history.map(runToHistoryRow), [history]);
@@ -250,6 +528,20 @@ export function RunForm() {
     label: `${candidate.subject} | ${candidate.recommendation.replaceAll("_", " ")} | $${candidate.spentUsd.toFixed(2)}`,
   }));
 
+  useEffect(() => {
+    if (compareCandidates.length === 0) {
+      if (compareRunId) {
+        setCompareRunId("");
+      }
+      return;
+    }
+
+    const stillValid = compareCandidates.some((candidate) => candidate.id === compareRunId);
+    if (!stillValid) {
+      setCompareRunId(compareCandidates[0]?.id ?? "");
+    }
+  }, [compareCandidates, compareRunId]);
+
   async function handleShareLink() {
     if (!run) {
       return;
@@ -257,13 +549,34 @@ export function RunForm() {
 
     try {
       const url = new URL(window.location.href);
-      url.searchParams.set("snapshot", serializeRunSnapshot(run));
+      let snapshot: string;
+      let copiedMessage = "Share link copied";
+      try {
+        const payload = await requestSnapshotSigning(run);
+        snapshot = payload.snapshot;
+        if (!payload.signingAvailable) {
+          copiedMessage = "Share link copied with digest-only attestation";
+        }
+      } catch {
+        snapshot = await serializeRunSnapshot(run);
+        copiedMessage = "Share link copied with local digest attestation";
+      }
+
+      url.searchParams.set("snapshot", snapshot);
       await navigator.clipboard.writeText(url.toString());
-      toast.success("Share link copied");
+      toast.success(copiedMessage);
     } catch {
       toast.error("Could not copy the share link on this device");
     }
   }
+
+  const estimate = {
+    estimatedPaidCallCostUsd: health?.estimatedPaidCallCostUsd ?? 0.01,
+    estimatedBaselineCalls: health?.estimatedBaselineCalls ?? 3,
+    estimatedMaxCalls: health?.estimatedMaxCalls ?? 4,
+  };
+
+  const failureSummary = summarizeFailure(events, run);
 
   return (
     <ProofSpendDashboard
@@ -273,19 +586,28 @@ export function RunForm() {
       onBudgetChange={setBudgetCapUsd}
       policyProfile={policyProfile}
       onPolicyChange={setPolicyProfile}
+      callbackUrl={callbackUrl}
+      onCallbackUrlChange={setCallbackUrl}
+      exampleQuestions={EXAMPLE_QUESTIONS.map((questionOption) => ({
+        short: questionOption.short,
+        full: questionOption.full,
+      }))}
+      onDemoRun={() => void handleDemoRun()}
+      demoRunDisabled={!health || health.paymentMode === "live"}
       isRunning={isRunning}
-      onRun={() => void handleRun()}
+      onRun={() => void submitRun()}
       error={error}
       mode={mode}
       spentUsd={spentUsd}
       paidCalls={paidCalls}
       timelineEvents={runEventsToTimeline(events)}
       evidenceRows={runToEvidenceRows(run)}
-      memo={analystToMemoView(run?.analystOutput)}
+      memo={analystToMemoView(run?.analystOutput, run?.records ?? [])}
       safeSpendRows={safeSpendToRows(run?.safeSpendLog ?? [])}
       historyRows={historyRows}
       selectedRunId={run?.id ?? null}
       onSelectHistory={loadHistoryRun}
+      onClearHistory={clearHistory}
       currentVendor={run ? runToCompareVendor(run) : null}
       compareVendor={compareRun ? runToCompareVendor(compareRun) : null}
       compareOptions={compareOptions}
@@ -299,22 +621,51 @@ export function RunForm() {
         if (!run) {
           return;
         }
-        downloadFile(
-          buildProofPacketFilename(run, "json"),
-          JSON.stringify(buildProofPacketJson(run), null, 2),
-          "application/json",
-        );
+        void (async () => {
+          let attestation: ProofAttestation | undefined;
+          try {
+            const payload = await requestSnapshotSigning(run);
+            attestation = payload.attestation;
+          } catch {
+            attestation = undefined;
+          }
+          downloadFile(
+            buildProofPacketFilename(run, "json"),
+            JSON.stringify(await buildProofPacketJson(run, attestation), null, 2),
+            "application/json",
+          );
+        })();
       }}
       onExportMarkdown={() => {
         if (!run) {
           return;
         }
-        downloadFile(
-          buildProofPacketFilename(run, "md"),
-          buildProofPacketMarkdown(run),
-          "text/markdown;charset=utf-8",
-        );
+        void (async () => {
+          let attestation: ProofAttestation | undefined;
+          try {
+            const payload = await requestSnapshotSigning(run);
+            attestation = payload.attestation;
+          } catch {
+            attestation = undefined;
+          }
+          downloadFile(
+            buildProofPacketFilename(run, "md"),
+            await buildProofPacketMarkdown(run, attestation),
+            "text/markdown;charset=utf-8",
+          );
+        })();
       }}
+      health={health}
+      healthUnavailable={healthUnavailable}
+      estimate={estimate}
+      schedules={schedules}
+      onCreateSchedule={(intervalMinutes) => void handleCreateSchedule(intervalMinutes)}
+      onDeleteSchedule={(scheduleId) => void handleDeleteSchedule(scheduleId)}
+      onToggleSchedule={(scheduleId, enabled) => void handleToggleSchedule(scheduleId, enabled)}
+      onRunScheduleNow={(scheduleId) => void handleRunScheduleNow(scheduleId)}
+      onRetryWebhook={(deliveryId) => void handleRetryWebhook(deliveryId)}
+      observabilityEvents={observabilityEvents}
+      failureSummary={failureSummary}
       runIdLabel={run ? `run_id | ${run.id}` : undefined}
     />
   );

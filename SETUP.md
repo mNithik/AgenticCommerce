@@ -129,6 +129,20 @@ npm test
 npm run build
 ```
 
+Optional after installing `@playwright/test`:
+
+```bash
+npm run test:e2e
+```
+
+If you are using WSL and Playwright reports missing browser libraries, run:
+
+```bash
+sudo npx playwright install-deps
+npx playwright install
+npm run test:e2e
+```
+
 ## Common issues
 
 ### `npm install` fails
@@ -147,3 +161,9 @@ npm run build
 
 - check that your selected provider key is present in `.env`
 - run `npm run smoke:llm`
+
+### Playwright installs browsers but still cannot launch them in WSL
+
+- this usually means the Linux host libraries are missing, not the browser download itself
+- run `sudo npx playwright install-deps`
+- then rerun `npx playwright install`

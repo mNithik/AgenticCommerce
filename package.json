@@ -12,7 +12,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "vitest run --exclude \"ayush/**\"",
+    "test": "vitest run --exclude \"ayush/**\" --exclude \"e2e/**\"",
+    "test:e2e": "playwright test",
     "setup:check": "node scripts/check-prerequisites.mjs",
     "smoke:llm": "node scripts/smoke-llm.mjs",
     "smoke:search": "node scripts/smoke-search.mjs",
@@ -66,6 +67,7 @@
     "vaul": "^1.1.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/node": "^22.10.1",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",

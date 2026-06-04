@@ -1,14 +1,7 @@
-import { config, resolvePaymentMode, resolvePolicyProfile } from "../../../lib/config";
+import { buildHealthStatus } from "../../../lib/health";
 
 export const runtime = "nodejs";
 
 export async function GET() {
-  return Response.json({
-    ok: true,
-    app: "ProofSpend",
-    paymentMode: resolvePaymentMode(),
-    policyProfile: resolvePolicyProfile(),
-    llmProvider: config.llmProvider,
-    mockX402: config.mockX402,
-  });
+  return Response.json(buildHealthStatus());
 }

@@ -1,15 +1,28 @@
-import { runDiligence } from "../../../lib/orchestrator";
+import { assertRunApiAuthorized } from "../../../lib/api-auth";
+import { applyRateLimit } from "../../../lib/rate-limit";
+import { executeRun } from "../../../lib/run-service";
 import { serializeSSE } from "../../../lib/sse";
 import type { PolicyProfile, RunEvent } from "../../../lib/types";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  const unauthorized = assertRunApiAuthorized(request);
+  if (unauthorized) {
+    return unauthorized;
+  }
+  const rateLimited = applyRateLimit(request, "runDiligence");
+  if (rateLimited) {
+    return rateLimited;
+  }
+
+  const url = new URL(request.url);
   let body: {
     question?: unknown;
     budgetCapUsd?: unknown;
     callbackUrl?: unknown;
     policyProfile?: unknown;
+    stream?: unknown;
   };
 
   try {
@@ -21,6 +34,10 @@ export async function POST(request: Request) {
   const question = typeof body.question === "string" ? body.question.trim() : "";
   const budgetCapUsd = typeof body.budgetCapUsd === "number" ? body.budgetCapUsd : Number(body.budgetCapUsd);
   const callbackUrl = typeof body.callbackUrl === "string" ? body.callbackUrl.trim() : "";
+  const stream =
+    body.stream === false || url.searchParams.get("stream") === "false"
+      ? false
+      : true;
   const policyProfile =
     body.policyProfile === "strict" || body.policyProfile === "standard"
       ? (body.policyProfile as PolicyProfile)
@@ -45,39 +62,42 @@ export async function POST(request: Request) {
     }
   }
 
-  const stream = new ReadableStream<Uint8Array>({
+  if (!stream) {
+    try {
+      const run = await executeRun({
+        question,
+        budgetCapUsd,
+        policyProfile,
+        callbackUrl,
+      });
+      return Response.json(run);
+    } catch (error) {
+      return new Response(
+        error instanceof Error ? error.message : "Unknown run error.",
+        { status: 500 },
+      );
+    }
+  }
+
+  const responseStream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const emit = (event: RunEvent) => {
         controller.enqueue(serializeSSE(event));
       };
 
       try {
-        const run = await runDiligence({
+        const run = await executeRun({
           question,
           budgetCapUsd,
           policyProfile,
           emit,
+          callbackUrl,
         });
 
-        if (callbackUrl) {
-          try {
-            await fetch(callbackUrl, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(run),
-            });
-          } catch (error) {
-            emit({
-              type: "run_error",
-              message:
-                error instanceof Error
-                  ? `Callback delivery failed: ${error.message}`
-                  : "Callback delivery failed.",
-            });
-          }
-        }
+        emit({
+          type: "complete",
+          run,
+        });
       } catch (error) {
         emit({
           type: "run_error",
@@ -89,7 +109,7 @@ export async function POST(request: Request) {
     },
   });
 
-  return new Response(stream, {
+  return new Response(responseStream, {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",

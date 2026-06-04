@@ -1,4 +1,5 @@
-import type { DiligenceRun } from "./types";
+import { buildSnapshotEnvelope, isDiligenceRun, isSnapshotEnvelope } from "./trust";
+import type { DiligenceRun, SnapshotEnvelope } from "./types";
 
 function encodeUtf8(value: string) {
   if (typeof window !== "undefined" && typeof window.btoa === "function") {
@@ -31,13 +32,33 @@ function decodeUtf8(value: string) {
   return Buffer.from(value, "base64url").toString("utf8");
 }
 
-export function serializeRunSnapshot(run: DiligenceRun) {
-  return encodeUtf8(JSON.stringify(run));
+export async function serializeRunSnapshot(run: DiligenceRun) {
+  const envelope = await buildSnapshotEnvelope(run);
+  return encodeUtf8(JSON.stringify(envelope));
 }
 
 export function deserializeRunSnapshot(value: string) {
   try {
-    return JSON.parse(decodeUtf8(value)) as DiligenceRun;
+    const parsed = JSON.parse(decodeUtf8(value)) as unknown;
+
+    if (isSnapshotEnvelope(parsed)) {
+      return parsed.run;
+    }
+
+    if (isDiligenceRun(parsed)) {
+      return parsed;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function parseRunSnapshot(value: string): SnapshotEnvelope | null {
+  try {
+    const parsed = JSON.parse(decodeUtf8(value)) as unknown;
+    return isSnapshotEnvelope(parsed) ? parsed : null;
   } catch {
     return null;
   }

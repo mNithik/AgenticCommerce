@@ -21,6 +21,7 @@ export type TimelineEventType =
   | "policy_blocked"
   | "search_failed"
   | "run_error"
+  | "webhook_delivery"
   | "complete";
 
 export interface TimelineEvent {
@@ -49,11 +50,13 @@ export interface HistoryRow {
   question: string;
   budget: number;
   policy: PolicyProfile;
+  paidCalls: number;
   records: number;
   spendUsd: number;
   confidence: number;
   recommendation: Recommendation;
   mode: PaymentMode;
+  webhookStatus?: "delivered" | "failed" | "skipped";
 }
 
 export interface SafeSpendRow {
@@ -67,6 +70,7 @@ export interface SafeSpendRow {
 }
 
 export interface CompareVendor {
+  id: string;
   subject: string;
   mode: PaymentMode;
   policy: PolicyProfile;
@@ -77,13 +81,26 @@ export interface CompareVendor {
   rationale: string;
 }
 
+export interface MemoCitationView {
+  recordId: string;
+  agent: AgentKey;
+  receipt: string;
+  paymentMode: PaymentMode;
+}
+
+export interface MemoClaimView {
+  text: string;
+  recordIds: string[];
+  citations: MemoCitationView[];
+}
+
 export interface MemoViewModel {
   verdict: Recommendation;
   confidence: number;
-  rationale: string;
-  strengths: { text: string; recordIds: string[] }[];
-  concerns: { text: string; recordIds: string[] }[];
-  nextSteps: { text: string; recordIds: string[] }[];
+  rationale: MemoClaimView;
+  strengths: MemoClaimView[];
+  concerns: MemoClaimView[];
+  nextSteps: MemoClaimView[];
 }
 
 const AGENT_KEY: Record<AgentName, AgentKey | "skeptic"> = {
@@ -121,6 +138,8 @@ function renderRunEventText(event: RunEvent): string {
       return `${event.agent} search failed for "${event.query}": ${event.reason}`;
     case "run_error":
       return `Run error: ${event.message}`;
+    case "webhook_delivery":
+      return `Webhook ${event.delivery.status} after ${event.delivery.attempts} attempt${event.delivery.attempts === 1 ? "" : "s"} for ${event.delivery.callbackUrl}`;
     case "complete":
       return `Run complete with ${event.run.records.length} evidence records.`;
   }
@@ -182,11 +201,13 @@ export function runToHistoryRow(run: DiligenceRun): HistoryRow {
     question: run.input,
     budget: run.budgetCapUsd,
     policy: run.policyProfile,
+    paidCalls: run.paidCalls,
     records: run.records.length,
     spendUsd: run.spentUsd,
     confidence: Math.round(run.confidence * 100),
     recommendation: run.recommendation,
     mode: run.paymentMode,
+    webhookStatus: run.webhookDelivery?.status,
   };
 }
 
@@ -204,6 +225,7 @@ export function safeSpendToRows(events: SafeSpendEvent[]): SafeSpendRow[] {
 
 export function runToCompareVendor(run: DiligenceRun): CompareVendor {
   return {
+    id: run.id,
     subject: run.subject,
     mode: run.paymentMode,
     policy: run.policyProfile,
@@ -215,21 +237,42 @@ export function runToCompareVendor(run: DiligenceRun): CompareVendor {
   };
 }
 
-export function analystToMemoView(analyst: AnalystOutput | null | undefined): MemoViewModel | null {
+function claimToView(
+  claim: AnalystOutput["rationale"],
+  records: EvidenceRecord[],
+): MemoClaimView {
+  const citations = claim.recordIds
+    .map((recordId) => records.find((record) => record.id === recordId))
+    .filter((record): record is EvidenceRecord => Boolean(record))
+    .map((record) => ({
+      recordId: record.id,
+      agent: AGENT_KEY[record.agent] === "skeptic" ? "counter" : (AGENT_KEY[record.agent] as AgentKey),
+      receipt: record.receipt,
+      paymentMode: record.paymentMode,
+    }));
+
+  return {
+    text: claim.claimText,
+    recordIds: claim.recordIds,
+    citations,
+  };
+}
+
+export function analystToMemoView(
+  analyst: AnalystOutput | null | undefined,
+  records: EvidenceRecord[] = [],
+): MemoViewModel | null {
   if (!analyst) {
     return null;
   }
 
   const mapClaims = (claims: AnalystOutput["strengths"]) =>
-    claims.map((claim) => ({
-      text: claim.claimText,
-      recordIds: claim.recordIds,
-    }));
+    claims.map((claim) => claimToView(claim, records));
 
   return {
     verdict: analyst.recommendation,
     confidence: Math.round(analyst.confidence * 100),
-    rationale: analyst.rationale.claimText,
+    rationale: claimToView(analyst.rationale, records),
     strengths: mapClaims(analyst.strengths),
     concerns: mapClaims(analyst.concerns),
     nextSteps: mapClaims(analyst.nextSteps),

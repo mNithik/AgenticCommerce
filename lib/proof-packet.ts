@@ -2,13 +2,15 @@ import type {
   DiligenceRun,
   EvidenceRecord,
   MemoClaim,
+  ProofAttestation,
   ProofPacketJson,
   ProofPacketMetadata,
   SafeSpendEvent,
 } from "./types";
+import { buildRunAttestation } from "./trust";
 
 const APP_NAME = "ProofSpend";
-const EXPORT_FORMAT_VERSION = 1;
+const EXPORT_FORMAT_VERSION = 2;
 
 function escapeMarkdown(value: string) {
   return value.replace(/\|/g, "\\|");
@@ -18,11 +20,22 @@ function toCurrency(value: number) {
   return `$${value.toFixed(2)}`;
 }
 
-function buildMetadata(): ProofPacketMetadata {
+function verificationLine(attestation: ProofAttestation) {
+  return attestation.signingMode === "hmac-sha256"
+    ? `Server-signed (${attestation.keyId ?? "proofspend-local"})`
+    : "Digest-only (tamper-evident)";
+}
+
+async function buildMetadata(
+  run: DiligenceRun,
+  attestationOverride?: ProofAttestation,
+): Promise<ProofPacketMetadata> {
+  const attestation = attestationOverride ?? (await buildRunAttestation(run));
   return {
     exportedAt: new Date().toISOString(),
     appName: APP_NAME,
     exportFormatVersion: EXPORT_FORMAT_VERSION,
+    attestation,
   };
 }
 
@@ -107,14 +120,21 @@ export function buildProofPacketFilename(
   return `${stem}-run_${run.id}.${extension}`;
 }
 
-export function buildProofPacketJson(run: DiligenceRun): ProofPacketJson {
+export async function buildProofPacketJson(
+  run: DiligenceRun,
+  attestationOverride?: ProofAttestation,
+): Promise<ProofPacketJson> {
   return {
-    metadata: buildMetadata(),
+    metadata: await buildMetadata(run, attestationOverride),
     run,
   };
 }
 
-export function buildProofPacketMarkdown(run: DiligenceRun) {
+export async function buildProofPacketMarkdown(
+  run: DiligenceRun,
+  attestationOverride?: ProofAttestation,
+) {
+  const metadata = await buildMetadata(run, attestationOverride);
   const sourcesByClaim = (claim: MemoClaim) =>
     claim.sourceUrls.length > 0 ? claim.sourceUrls.map((url) => `- ${url}`).join("\n") : "- none";
 
@@ -147,6 +167,17 @@ export function buildProofPacketMarkdown(run: DiligenceRun) {
     `- Policy profile: ${run.policyProfile}`,
     `- Spend: ${toCurrency(run.spentUsd)} of ${toCurrency(run.budgetCapUsd)}`,
     `- Paid calls: ${run.paidCalls}`,
+    "",
+    "## Verification",
+    "",
+    `- Exported at: ${metadata.exportedAt}`,
+    `- Export format version: ${metadata.exportFormatVersion}`,
+    `- Digest: ${metadata.attestation.digest}`,
+    `- Signing mode: ${verificationLine(metadata.attestation)}`,
+    metadata.attestation.signature
+      ? `- Signature: ${metadata.attestation.signature}`
+      : "- Signature: none",
+    `- Verify endpoint: POST /api/verify-proof`,
     "",
     "## Rationale",
     "",

@@ -6,6 +6,17 @@ function pickSentence(text: string, fallback: string) {
   return text.split(/(?<=[.!?])\s+/)[0]?.trim() || fallback;
 }
 
+function conciseClaim(text: string, fallback: string) {
+  const cleaned = text
+    .replace(/^here(?:'s| is)\s+(?:a\s+)?concise\s+evidence\s+summary(?::)?\s*/i, "")
+    .replace(/^based on the provided sources[:,]?\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const sentence = pickSentence(cleaned, fallback);
+  return sentence.length > 220 ? `${sentence.slice(0, 219).trim()}…` : sentence;
+}
+
 function keywordScore(text: string, keywords: string[]) {
   const lower = text.toLowerCase();
   const hits = keywords.filter((keyword) => lower.includes(keyword)).length;
@@ -53,7 +64,7 @@ export const deterministicProvider: LLMProvider = {
       .slice(0, 2)
       .map((record, index) => ({
         id: makeId("claim", `${record.id}_strength_${index}`),
-        claimText: pickSentence(record.finding, "Positive evidence is limited."),
+        claimText: conciseClaim(record.finding, "Positive evidence is limited."),
         recordIds: [record.id],
         sourceUrls: unique(record.sources.slice(0, 2).map((source) => source.url)),
       }));
@@ -63,7 +74,7 @@ export const deterministicProvider: LLMProvider = {
       .slice(0, 2)
       .map((record, index) => ({
         id: makeId("claim", `${record.id}_concern_${index}`),
-        claimText: pickSentence(record.finding, "Risk evidence is limited."),
+        claimText: conciseClaim(record.finding, "Risk evidence is limited."),
         recordIds: [record.id],
         sourceUrls: unique(record.sources.slice(0, 2).map((source) => source.url)),
       }));

@@ -4,3 +4,5 @@ node_modules/
 coverage/
 dist/
 ayush/
+test-results/
+playwright-report/

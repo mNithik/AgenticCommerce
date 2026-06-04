@@ -2,39 +2,43 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  Search,
-  FileText,
-  Scale,
-  Receipt,
-  ExternalLink,
-  Loader2,
+  Activity,
   AlertCircle,
   CheckCircle2,
-  XCircle,
-  HelpCircle,
-  Wallet,
-  Activity,
-  ShieldAlert,
-  StickyNote,
-  Gavel,
-  Download,
   ChevronDown,
-  ShieldCheck,
-  History,
-  FileDown,
+  ExternalLink,
   FileJson,
-  Play,
-  Rocket,
-  PlayCircle,
-  CheckCheck,
+  FileText,
+  HelpCircle,
+  History,
   Link2,
+  Loader2,
+  Play,
+  Receipt,
+  Rocket,
+  Scale,
+  Search,
+  ShieldAlert,
+  ShieldCheck,
+  Wallet,
+  XCircle,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Table,
   TableBody,
@@ -43,27 +47,21 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
-import type { PolicyProfile as AppPolicyProfile } from "@/lib/types";
+import type { HealthStatusResponse, PolicyProfile as AppPolicyProfile } from "@/lib/types";
+import type { ObservabilityEvent, ScheduleTemplate, WebhookDeliveryStatus } from "@/lib/types";
 import type {
   CompareVendor,
+  EvidenceRow,
   HistoryRow as DashboardHistoryRow,
+  MemoClaimView,
   MemoViewModel,
   SafeSpendRow,
   TimelineEvent as DashboardTimelineEvent,
 } from "@/lib/dashboard-adapters";
+
+type AgentKey = "market" | "evidence" | "counter";
 
 export type ProofSpendDashboardProps = {
   question: string;
@@ -72,6 +70,11 @@ export type ProofSpendDashboardProps = {
   onBudgetChange: (value: number) => void;
   policyProfile: AppPolicyProfile;
   onPolicyChange: (value: AppPolicyProfile) => void;
+  callbackUrl: string;
+  onCallbackUrlChange: (value: string) => void;
+  exampleQuestions: Array<{ short: string; full: string }>;
+  onDemoRun: () => void;
+  demoRunDisabled: boolean;
   isRunning: boolean;
   onRun: () => void;
   error: string | null;
@@ -85,6 +88,7 @@ export type ProofSpendDashboardProps = {
   historyRows: DashboardHistoryRow[];
   selectedRunId: string | null;
   onSelectHistory: (runId: string) => void;
+  onClearHistory: () => void;
   currentVendor: CompareVendor | null;
   compareVendor: CompareVendor | null;
   compareOptions: { id: string; label: string }[];
@@ -96,330 +100,61 @@ export type ProofSpendDashboardProps = {
   onShareLink: () => Promise<void>;
   onExportJson: () => void;
   onExportMarkdown: () => void;
+  health: HealthStatusResponse | null;
+  healthUnavailable: boolean;
+  estimate: {
+    estimatedPaidCallCostUsd: number;
+    estimatedBaselineCalls: number;
+    estimatedMaxCalls: number;
+  };
+  schedules: ScheduleTemplate[];
+  onCreateSchedule: (intervalMinutes: number) => void;
+  onDeleteSchedule: (scheduleId: string) => void;
+  onToggleSchedule: (scheduleId: string, enabled: boolean) => void;
+  onRunScheduleNow: (scheduleId: string) => void;
+  onRetryWebhook: (deliveryId: string) => void;
+  observabilityEvents: ObservabilityEvent[];
+  failureSummary: string | null;
   runIdLabel?: string;
 };
 
-type Mode = "mock" | "live" | "waiting";
-type PolicyProfile = "standard" | "strict";
-type AgentKey = "market" | "evidence" | "counter";
-type TimelineAgentKey = AgentKey | "skeptic";
-
-type TimelineEventType =
-  | "run_started"
-  | "agent_started"
-  | "payment_settled"
-  | "agent_completed"
-  | "policy_blocked"
-  | "search_failed"
-  | "run_error"
-  | "complete"
-  | "search"
-  | "note"
-  | "ruling";
-
-interface TimelineEvent {
-  t: string;
-  agent: TimelineAgentKey | "system";
-  type: TimelineEventType;
-  text: string;
-  cost?: number;
-  receipt?: string;
-}
-
-interface EvidenceRow {
-  id: string;
-  agent: AgentKey;
-  query: string;
-  finding: string;
-  sources: { label: string; url: string }[];
-  receipt: string;
-  cost: number;
-  paymentMode: "mock" | "live";
-}
-
-// Legacy sample blocks kept for subcomponent dev reference only.
-void 0;
-
-const AGENT_META: Record<AgentKey, { label: string; color: string; icon: typeof Search }> = {
-  market: { label: "Market", color: "#7dd3c0", icon: Search },
-  evidence: { label: "Evidence", color: "#fbbf24", icon: FileText },
-  counter: { label: "Counter", color: "#f87171", icon: Scale },
+const AGENT_META: Record<AgentKey, { label: string; color: string }> = {
+  market: { label: "Market", color: "bg-sky-500" },
+  evidence: { label: "Evidence", color: "bg-emerald-500" },
+  counter: { label: "Counter", color: "bg-amber-500" },
 };
 
-const SAMPLE_TIMELINE: TimelineEvent[] = [
-  { t: "00:00.1", agent: "system",   type: "run_started",      text: "Run started in mock mode with nvidia using the standard policy profile." },
-  { t: "00:00.9", agent: "market",   type: "agent_started",    text: "Market agent online · scoping Apollo.io pricing surface" },
-  { t: "00:02.8", agent: "market",   type: "payment_settled",  text: "search.x402 settled on Base · Apollo.io pricing tiers", cost: 0.01, receipt: "mock:0xrun_956001" },
-  { t: "00:03.4", agent: "market",   type: "agent_completed",  text: "Market agent returned 4 pricing data points" },
-  { t: "00:03.6", agent: "evidence", type: "agent_started",    text: "Evidence agent online · seeking pipeline-lift benchmarks" },
-  { t: "00:05.1", agent: "evidence", type: "payment_settled",  text: "reports.x402 settled on Base · ZoomInfo benchmark", cost: 0.01, receipt: "mock:0xrun_956002" },
-  { t: "00:05.7", agent: "evidence", type: "agent_completed",  text: "Evidence agent returned 2 independently-sourced metrics" },
-  { t: "00:06.0", agent: "counter",  type: "policy_blocked",   text: "Gartner full report blocked · projected $0.034 exceeds per-call cap" },
-  { t: "00:06.7", agent: "counter",  type: "agent_started",    text: "Counter agent re-routed to public G2 review corpus" },
-  { t: "00:08.0", agent: "counter",  type: "payment_settled",  text: "reviews.x402 settled on Base · accuracy complaints", cost: 0.01, receipt: "mock:0xrun_956003" },
-  { t: "00:08.6", agent: "counter",  type: "agent_completed",  text: "Counter agent flagged 31% stale-data complaints" },
-  { t: "00:10.4", agent: "skeptic",  type: "agent_started",    text: "Skeptic agent online · stress-testing memo synthesis" },
-  { t: "00:12.6", agent: "system",   type: "ruling",           text: "Synthesis complete · confidence 50% · need_more_evidence" },
-];
-
-// Timeline-only agent palette (per redesign spec). Other surfaces keep AGENT_META.
-const TIMELINE_AGENT: Record<
-  TimelineAgentKey | "system",
-  { label: string; border: string; chip: string; dot: string }
-> = {
-  market:   { label: "Market",   border: "#38bdf8", chip: "text-sky-300",     dot: "bg-sky-400" },
-  evidence: { label: "Evidence", border: "#34d399", chip: "text-emerald-300", dot: "bg-emerald-400" },
-  counter:  { label: "Counter",  border: "#f59e0b", chip: "text-amber-300",   dot: "bg-amber-400" },
-  skeptic:  { label: "Skeptic",  border: "#a78bfa", chip: "text-violet-300",  dot: "bg-violet-400" },
-  system:   { label: "System",   border: "#64748b", chip: "text-white/55",    dot: "bg-white/40" },
-};
-
-const EVENT_TYPE_LABEL: Record<TimelineEventType, string> = {
-  run_started: "RUN_STARTED",
-  agent_started: "AGENT_STARTED",
-  payment_settled: "PAYMENT_SETTLED",
-  agent_completed: "AGENT_COMPLETED",
-  policy_blocked: "POLICY_BLOCKED",
-  search_failed: "SEARCH_FAILED",
-  run_error: "RUN_ERROR",
-  complete: "COMPLETE",
-  search: "Search",
-  note: "Note",
-  ruling: "Ruling",
-};
-
-const EVENT_TYPE_ICON: Record<TimelineEventType, typeof Search> = {
-  run_started: Rocket,
-  agent_started: PlayCircle,
-  agent_completed: CheckCheck,
-  search: Search,
-  payment_settled: Receipt,
-  policy_blocked: ShieldAlert,
-  search_failed: AlertCircle,
-  run_error: AlertCircle,
-  complete: CheckCheck,
-  note: StickyNote,
-  ruling: Gavel,
-};
-
-const SAMPLE_EVIDENCE: EvidenceRow[] = [
-  {
-    id: "sample_market",
-    agent: "market",
-    query: "Apollo.io pricing tiers and seat economics",
-    finding:
-      "Basic $49/seat, Pro $79/seat, Org $119/seat (annual). $500/mo ≈ 5–6 Pro seats with credit overage risk.",
-    sources: [
-      { label: "apollo.io/pricing", url: "#" },
-      { label: "saasworthy.com", url: "#" },
-    ],
-    receipt: "mock:0xrun_956001",
-    cost: 0.01,
-    paymentMode: "mock",
-  },
-  {
-    id: "sample_evidence",
-    agent: "evidence",
-    query: "Reported lift in qualified pipeline from Apollo users",
-    finding:
-      "Median teams report 1.4–2.1× SQL volume in months 2–4, conditional on enrichment hygiene workflow.",
-    sources: [
-      { label: "g2.com/apollo", url: "#" },
-      { label: "forrester wave 2024", url: "#" },
-    ],
-    receipt: "mock:0xrun_956002",
-    cost: 0.01,
-    paymentMode: "mock",
-  },
-  {
-    id: "sample_counter",
-    agent: "counter",
-    query: "Data accuracy complaints and churn signals",
-    finding:
-      "31% of recent G2 reviews cite stale or inaccurate mobile numbers; 12% churn within 90 days per Trust Radius.",
-    sources: [
-      { label: "trustradius.com", url: "#" },
-      { label: "reddit.com/r/sales", url: "#" },
-    ],
-    receipt: "mock:0xrun_956003",
-    cost: 0.01,
-    paymentMode: "mock",
-  },
-];
-
-type Citation = { agent: AgentKey | "system"; receipt: string };
-type Claim = { text: string; citations: Citation[] };
-
-const RECOMMENDATION: {
-  verdict: "buy" | "do_not_buy" | "need_more_evidence";
-  confidence: number;
-  rationale: string;
-  strengths: Claim[];
-  concerns: Claim[];
-  nextSteps: Claim[];
-} = {
-  verdict: "need_more_evidence",
-  confidence: 61,
-  rationale:
-    "Apollo.io clears the cost-fit bar at five to six Pro seats, and two independent sources back the headline 1.4–2.1× SQL lift inside four months. That case is undermined by a 31% rate of stale-mobile complaints and a 12% ninety-day churn signal — both of which directly erode the dialing ROI the purchase is supposed to fund. Before recommending the spend, the panel wants a two-seat trial measuring real dial-to-connect rate, plus a deeper read on Gartner and Forrester full text that was blocked by the per-call cap on this run.",
-  strengths: [
-    {
-      text: "Median 1.4–2.1× SQL lift within 4 months is well-attested across two independent sources.",
-      citations: [
-        { agent: "evidence", receipt: "mock:0xrun_956002" },
-        { agent: "market", receipt: "mock:0xrun_956001" },
-      ],
-    },
-    {
-      text: "Seat-based pricing is predictable and cancellable monthly on Pro tier.",
-      citations: [{ agent: "market", receipt: "mock:0xrun_956001" }],
-    },
-  ],
-  concerns: [
-    {
-      text: "31% of reviewers cite stale mobile data — directly undermines outbound dialing ROI.",
-      citations: [{ agent: "counter", receipt: "mock:0xrun_956003" }],
-    },
-    {
-      text: "12% 90-day churn suggests buyer's remorse is common at this price point.",
-      citations: [
-        { agent: "counter", receipt: "mock:0xrun_956003" },
-        { agent: "evidence", receipt: "mock:0xrun_956002" },
-      ],
-    },
-  ],
-  nextSteps: [
-    {
-      text: "Run a 14-day Pro trial on 2 seats and measure dial-to-connect rate before committing.",
-      citations: [{ agent: "evidence", receipt: "mock:0xrun_956002" }],
-    },
-    {
-      text: "Re-run diligence with budget $1.00 to fetch paid analyst reports (Gartner, Forrester full text).",
-      citations: [
-        { agent: "market", receipt: "mock:0xrun_956001" },
-        { agent: "evidence", receipt: "mock:0xrun_956002" },
-      ],
-    },
-  ],
-};
-
-const SPENT = SAMPLE_EVIDENCE.reduce((s, r) => s + r.cost, 0);
-
-const EXAMPLE_QUESTIONS = [
-  {
-    short: "Apollo.io lead gen",
-    full: "Should I spend $500/month on Apollo.io for B2B lead generation?",
-  },
-  {
-    short: "HubSpot Enterprise",
-    full: "Is HubSpot Enterprise worth $3,600/month for a 25-person sales team?",
-  },
-  {
-    short: "LeadMagic",
-    full: "Should we switch to LeadMagic for AI-powered lead enrichment at $99/seat?",
-  },
-];
-
-type SafeSpendEvent = {
-  kind: "batch_preflight" | "preflight" | "receipt";
-  agent: AgentKey | "system";
-  action: string;
-  status: "allowed" | "blocked";
-  reason: string;
-  queryPreview?: string;
-  projectedSpendUsd: number;
-};
-
-const SAMPLE_SAFESPEND: SafeSpendEvent[] = [
-  {
-    kind: "batch_preflight",
-    agent: "system",
-    action: "batch.dispatch(3)",
-    status: "allowed",
-    reason: "Aggregate projection $0.03 within $0.25 cap",
-    queryPreview: "3 paid searches queued across Market, Evidence, Counter",
-    projectedSpendUsd: 0.03,
-  },
-  {
-    kind: "preflight",
-    agent: "market",
-    action: "search.x402",
-    status: "allowed",
-    reason: "Per-call $0.012 ≤ $0.02 per-call cap",
-    queryPreview: "Apollo.io pricing tiers and seat economics",
-    projectedSpendUsd: 0.012,
-  },
-  {
-    kind: "preflight",
-    agent: "counter",
-    action: "reports.x402",
-    status: "blocked",
-    reason: "Source paywalled · projected $0.034 exceeds per-call cap",
-    queryPreview: "Full Gartner Magic Quadrant 2025 — sales engagement",
-    projectedSpendUsd: 0.034,
-  },
-  {
-    kind: "receipt",
-    agent: "evidence",
-    action: "reports.x402",
-    status: "allowed",
-    reason: "Receipt mock:0xrun_956002 verified on Base",
-    queryPreview: "Apollo.io vs ZoomInfo conversion benchmark",
-    projectedSpendUsd: 0.014,
-  },
-];
-
-type HistoryRow = DashboardHistoryRow;
-
-const SAMPLE_HISTORY: HistoryRow[] = [
-  {
-    id: "run_956",
-    subject: "Apollo.io",
-    question:
-      "Should I spend $500 per month on Apollo.io for B2B lead generation for my early-stage SaaS startup?",
-    budget: 0.25,
-    policy: "standard",
-    records: 3,
-    spendUsd: 0.03,
-    confidence: 61,
-    recommendation: "need_more_evidence",
-    mode: "mock",
-  },
-  {
-    id: "run_955",
-    subject: "Apollo.io",
-    question: "Is Apollo.io credit pricing competitive vs LeadMagic?",
-    budget: 0.5,
-    policy: "strict",
-    records: 6,
-    spendUsd: 0.082,
-    confidence: 64,
-    recommendation: "need_more_evidence",
-    mode: "live",
-  },
-];
-
-function ModeBadge({ mode, running }: { mode: Mode; running: boolean }) {
+function ModeBadge({ mode, running }: { mode: ProofSpendDashboardProps["mode"]; running: boolean }) {
   const config = {
-    live:    { label: "Live x402", ring: "border-primary/30 bg-primary/10 text-primary", dot: "bg-primary" },
-    mock:    { label: "Mock",      ring: "border-amber-500/30 bg-amber-500/10 text-amber-700", dot: "bg-amber-500" },
-    waiting: { label: "Waiting",   ring: "border-border bg-secondary/60 text-muted-foreground", dot: "bg-muted-foreground" },
+    live: {
+      label: "Live x402",
+      className: "border-primary/30 bg-primary/10 text-primary",
+      dot: "bg-primary",
+    },
+    mock: {
+      label: "Mock",
+      className: "border-amber-500/30 bg-amber-500/10 text-amber-700",
+      dot: "bg-amber-500",
+    },
+    waiting: {
+      label: "Waiting",
+      className: "border-border bg-secondary/60 text-muted-foreground",
+      dot: "bg-muted-foreground",
+    },
   }[mode];
+
   return (
     <div
-      role="status"
-      aria-label={`Mode: ${config.label}${running ? ", running" : ""}`}
       className={cn(
         "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium tracking-wide",
-        config.ring,
+        config.className,
       )}
     >
       <span
-        aria-hidden="true"
         className={cn(
           "inline-block h-1.5 w-1.5 rounded-full",
           config.dot,
-          running && "ps-pulse-dot"
+          running && "animate-pulse",
         )}
       />
       {config.label}
@@ -427,18 +162,101 @@ function ModeBadge({ mode, running }: { mode: Mode; running: boolean }) {
   );
 }
 
-function CitationChip({ agent, receipt }: { agent: AgentKey | "system"; receipt: string }) {
-  const isLive = !receipt.startsWith("mock:");
-  const label = agent === "system" ? "system" : AGENT_META[agent].label;
+function StatusStrip({
+  health,
+  healthUnavailable,
+}: {
+  health: HealthStatusResponse | null;
+  healthUnavailable: boolean;
+}) {
+  const items = health
+    ? [
+        {
+          label: "Payments",
+          value:
+            health.paymentMode === "mock"
+              ? "Mock ready"
+              : health.liveConfigured
+                ? "Live configured"
+                : "Live wallet missing",
+          tone:
+            health.paymentMode === "mock" || health.liveConfigured
+              ? "healthy"
+              : "warning",
+        },
+        { label: "LLM", value: health.llmProvider, tone: "neutral" },
+        { label: "Default policy", value: health.policyProfile, tone: "neutral" },
+        {
+          label: "Trust",
+          value: health.snapshotSigningAvailable ? "Signed snapshots ready" : "Digest-only proofs",
+          tone: health.snapshotSigningAvailable ? "healthy" : "neutral",
+        },
+        {
+          label: "Ops",
+          value: `up ${health.uptimeSeconds}s | run ${health.rateLimits.runDiligence.limit}/min`,
+          tone: "neutral",
+        },
+        { label: "Readiness", value: health.readinessSummary, tone: "neutral" },
+      ]
+    : [
+        {
+          label: "System status",
+          value: healthUnavailable ? "Status unavailable" : "Checking system status...",
+          tone: healthUnavailable ? "warning" : "neutral",
+        },
+      ];
+
   return (
-    <span className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-      <span className="text-foreground/80">{label}</span>
-      <span className="text-border">·</span>
-      <span className={cn("font-mono", isLive && "text-primary")}>
-        {isLive ? receipt.slice(0, 10) + "…" : receipt}
-      </span>
-      {isLive && <ExternalLink className="h-2.5 w-2.5" />}
-    </span>
+    <div className="grid gap-3 rounded-lg border border-border/70 bg-secondary/20 p-3 md:grid-cols-6">
+      {items.map((item) => (
+        <div key={item.label} className="space-y-1">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            {item.label}
+          </div>
+          <div
+            className={cn(
+              "text-sm",
+              item.tone === "healthy" && "text-emerald-700",
+              item.tone === "warning" && "text-amber-700",
+              item.tone === "neutral" && "text-foreground/85",
+            )}
+          >
+            {item.value}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PreRunEstimate({
+  estimate,
+  policyProfile,
+}: {
+  estimate: ProofSpendDashboardProps["estimate"];
+  policyProfile: AppPolicyProfile;
+}) {
+  const baseline = estimate.estimatedPaidCallCostUsd * estimate.estimatedBaselineCalls;
+  const max = estimate.estimatedPaidCallCostUsd * estimate.estimatedMaxCalls;
+
+  return (
+    <div className="rounded-lg border border-border/70 bg-secondary/20 p-3">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        Pre-run estimate
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-foreground/90">
+        <span className="font-mono">${estimate.estimatedPaidCallCostUsd.toFixed(2)}</span>
+        <span className="text-muted-foreground">per paid call</span>
+        <span className="text-border">|</span>
+        <span className="font-mono">${baseline.toFixed(2)}-${max.toFixed(2)}</span>
+        <span className="text-muted-foreground">
+          for {estimate.estimatedBaselineCalls}-{estimate.estimatedMaxCalls} calls
+        </span>
+      </div>
+      <div className="mt-1 text-xs text-muted-foreground">
+        {policyProfile} policy selected. Estimate only; final spend depends on live policy decisions.
+      </div>
+    </div>
   );
 }
 
@@ -447,7 +265,9 @@ function LiveTimeline({ events }: { events: DashboardTimelineEvent[] }) {
 
   useEffect(() => {
     const vp = viewportRef.current;
-    if (!vp) return;
+    if (!vp) {
+      return;
+    }
     vp.scrollTo({ top: vp.scrollHeight, behavior: "smooth" });
   }, [events.length]);
 
@@ -469,108 +289,31 @@ function LiveTimeline({ events }: { events: DashboardTimelineEvent[] }) {
               <Activity className="h-4 w-4 text-white/40" />
             </div>
             <p className="max-w-[28ch] text-sm leading-relaxed text-white/55">
-              Run diligence to see agents pay for evidence in real time.
+              No run yet. Start diligence to watch paid evidence collection unfold here.
             </p>
           </div>
         ) : (
-          <div
-            ref={viewportRef}
-            className="max-h-[360px] overflow-y-auto scroll-smooth [scrollbar-color:rgba(255,255,255,0.15)_transparent] [scrollbar-width:thin]"
-          >
-            <ol className="relative px-6 py-5">
-              {/* connecting line */}
-              <span
-                aria-hidden
-                className="pointer-events-none absolute left-[34px] top-6 bottom-6 w-px bg-white/10"
-              />
-              {events.map((e, i) => {
-                const meta = TIMELINE_AGENT[e.agent];
-                const Icon = EVENT_TYPE_ICON[e.type];
-                const isBlocked = e.type === "policy_blocked";
-                const isPaid = e.type === "payment_settled";
-                return (
-                  <li key={i} className="relative pl-10 pb-4 last:pb-0">
-                    {/* node */}
-                    <span
-                      className={cn(
-                        "absolute left-[26px] top-3 z-10 flex h-4 w-4 -translate-x-1/2 items-center justify-center rounded-full border-2 bg-[#18211b]",
-                        isBlocked && "border-red-400/80",
-                      )}
-                      style={isBlocked ? undefined : { borderColor: meta.border }}
-                    >
-                      <span
-                        className={cn(
-                          "h-1.5 w-1.5 rounded-full",
-                          isBlocked ? "bg-red-400" : meta.dot,
-                        )}
-                      />
-                    </span>
-
-                    {/* card */}
-                    <div
-                      className={cn(
-                        "rounded-md border-l-2 bg-white/[0.025] px-3 py-2.5 transition-colors hover:bg-white/[0.045]",
-                        isBlocked
-                          ? "border border-red-500/40 border-l-red-400 bg-red-500/[0.06]"
-                          : "border-y border-r border-white/5",
-                      )}
-                      style={isBlocked ? undefined : { borderLeftColor: meta.border }}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Icon
-                          className={cn(
-                            "h-3.5 w-3.5",
-                            isBlocked ? "text-red-300" : "text-white/55",
-                          )}
-                        />
-                        <span
-                          className={cn(
-                            "text-[10px] font-semibold uppercase tracking-[0.16em]",
-                            isBlocked ? "text-red-300" : meta.chip,
-                          )}
-                        >
-                          {meta.label}
-                        </span>
-                        <span className="text-white/20">·</span>
-                        <span
-                          className={cn(
-                            "text-[10px] font-semibold uppercase tracking-[0.16em]",
-                            isBlocked ? "text-red-200/90" : "text-white/45",
-                          )}
-                        >
-                          {EVENT_TYPE_LABEL[e.type]}
-                        </span>
-                        <span className="ml-auto font-mono text-[10px] text-white/30">{e.t}</span>
-                      </div>
-
-                      <div
-                        className={cn(
-                          "mt-1 text-sm leading-snug",
-                          isBlocked ? "text-red-50/90" : "text-white/85",
-                        )}
-                      >
-                        {e.text}
-                      </div>
-
-                      {isPaid && (e.cost != null || e.receipt) && (
-                        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-                          {e.cost != null && (
-                            <span className="font-mono text-xs text-emerald-300">
-                              ${e.cost.toFixed(2)}
-                            </span>
-                          )}
-                          {e.receipt && (
-                            <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-white/65">
-                              <Receipt className="h-2.5 w-2.5 text-white/40" />
-                              {e.receipt}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
+          <div ref={viewportRef} className="max-h-[360px] overflow-y-auto px-6 py-5">
+            <ol className="space-y-3">
+              {events.map((event, index) => (
+                <li
+                  key={`${event.t}-${index}`}
+                  className={cn(
+                    "rounded-md border px-3 py-2.5",
+                    event.type === "policy_blocked" || event.type === "run_error"
+                      ? "border-red-500/30 bg-red-500/10"
+                      : "border-white/10 bg-white/[0.03]",
+                  )}
+                >
+                  <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60">
+                    <span>{event.agent}</span>
+                    <span className="text-white/25">|</span>
+                    <span>{event.type}</span>
+                    <span className="ml-auto font-mono text-white/35">{event.t}</span>
+                  </div>
+                  <p className="mt-1.5 text-sm leading-relaxed text-white/85">{event.text}</p>
+                </li>
+              ))}
             </ol>
           </div>
         )}
@@ -580,43 +323,32 @@ function LiveTimeline({ events }: { events: DashboardTimelineEvent[] }) {
 }
 
 function ConfidenceRing({ value }: { value: number }) {
-  const size = 96;
-  const stroke = 8;
-  const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r;
-  const offset = c - (value / 100) * c;
+  const safeValue = Math.max(0, Math.min(100, value));
+  const stroke = 2 * Math.PI * 38;
+  const offset = stroke * (1 - safeValue / 100);
+
   return (
-    <div className="relative inline-flex h-24 w-24 items-center justify-center">
-      <svg width={size} height={size} className="-rotate-90">
+    <div className="relative h-24 w-24">
+      <svg className="h-24 w-24 -rotate-90" viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="38" stroke="currentColor" strokeWidth="8" fill="none" className="text-border/70" />
         <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
+          cx="50"
+          cy="50"
+          r="38"
           stroke="currentColor"
-          className="text-border"
-          strokeWidth={stroke}
+          strokeWidth="8"
           fill="none"
-        />
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          stroke="currentColor"
-          className="text-primary transition-[stroke-dashoffset] duration-700"
-          strokeWidth={stroke}
-          strokeLinecap="round"
-          fill="none"
-          strokeDasharray={c}
+          strokeDasharray={stroke}
           strokeDashoffset={offset}
+          strokeLinecap="round"
+          className="text-primary transition-all"
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="font-serif-display text-2xl font-medium leading-none text-foreground">
-          {value}%
-        </span>
-        <span className="mt-0.5 text-[9px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+        <div className="font-mono text-2xl font-semibold text-foreground">{safeValue}%</div>
+        <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
           confidence
-        </span>
+        </div>
       </div>
     </div>
   );
@@ -629,67 +361,86 @@ function VerdictBlock({
   verdict: "buy" | "do_not_buy" | "need_more_evidence";
   confidence: number;
 }) {
-  const map = {
+  const config = {
     buy: {
       label: "BUY",
       sub: "Recommended action",
-      pill: "bg-emerald-600 text-white ring-emerald-600/20",
+      className: "bg-emerald-600 text-white ring-emerald-600/20",
       Icon: CheckCircle2,
     },
     do_not_buy: {
       label: "DO NOT BUY",
       sub: "Recommended action",
-      pill: "bg-red-600 text-white ring-red-600/20",
+      className: "bg-red-600 text-white ring-red-600/20",
       Icon: XCircle,
     },
     need_more_evidence: {
       label: "NEED MORE EVIDENCE",
-      sub: "Inconclusive — gather more signal",
-      pill: "bg-amber-500 text-white ring-amber-500/20",
+      sub: "Inconclusive - gather more signal",
+      className: "bg-amber-500 text-white ring-amber-500/20",
       Icon: HelpCircle,
     },
   }[verdict];
-  const { Icon } = map;
+
   return (
     <div className="flex flex-wrap items-center justify-between gap-6">
-      <div className="flex flex-col gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+      <div className="space-y-2">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
           Recommendation
-        </span>
-        <div
-          className={cn(
-            "inline-flex items-center gap-3 self-start rounded-full px-5 py-2.5 text-base font-semibold tracking-wider shadow-sm ring-8",
-            map.pill,
-          )}
-        >
-          <Icon className="h-5 w-5" />
-          {map.label}
         </div>
-        <span className="text-sm text-muted-foreground">{map.sub}</span>
+        <div className={cn("inline-flex items-center gap-3 rounded-full px-5 py-2.5 text-base font-semibold tracking-wider ring-8", config.className)}>
+          <config.Icon className="h-5 w-5" />
+          {config.label}
+        </div>
+        <div className="text-sm text-muted-foreground">{config.sub}</div>
       </div>
       <ConfidenceRing value={confidence} />
     </div>
   );
 }
 
-function ClaimChip({ agent, receipt }: Citation) {
-  const label = agent === "system" ? "System" : AGENT_META[agent].label;
-  const isLive = !receipt.startsWith("mock:");
-  const display = isLive ? receipt.slice(0, 10) + "…" : receipt;
+function ClaimCitations({
+  claim,
+  selectedRecordId,
+  onSelect,
+}: {
+  claim: MemoClaimView;
+  selectedRecordId: string | null;
+  onSelect: (recordId: string) => void;
+}) {
+  if (claim.citations.length === 0) {
+    return null;
+  }
+
   return (
-    <a
-      href="#"
-      className={cn(
-        "group inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-foreground",
-      )}
-    >
-      <span className="text-foreground">{label}</span>
-      <span className="text-border">·</span>
-      <span className={cn("font-mono", isLive ? "text-primary" : "text-muted-foreground")}>
-        {display}
-      </span>
-      <ExternalLink className="h-2.5 w-2.5 opacity-0 transition-opacity group-hover:opacity-70" />
-    </a>
+    <div className="mt-2 flex flex-wrap gap-2">
+      {claim.citations.map((citation) => {
+        const active = selectedRecordId === citation.recordId;
+        const shortReceipt =
+          citation.paymentMode === "live"
+            ? `${citation.receipt.slice(0, 8)}...`
+            : "mock receipt";
+
+        return (
+          <button
+            key={`${citation.recordId}-${citation.receipt}`}
+            type="button"
+            onClick={() => onSelect(citation.recordId)}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] transition-colors",
+              active
+                ? "border-primary/50 bg-primary/10 text-primary"
+                : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground",
+            )}
+          >
+            <span className={cn("h-1.5 w-1.5 rounded-full", AGENT_META[citation.agent].color)} />
+            <span>{AGENT_META[citation.agent].label}</span>
+            <span className="text-border">|</span>
+            <span className="font-mono">{shortReceipt}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -700,34 +451,36 @@ function MemoSection({
   onSelect,
 }: {
   title: string;
-  items: { text: string; recordIds: string[] }[];
+  items: MemoClaimView[];
   selectedRecordId: string | null;
   onSelect: (recordId: string) => void;
 }) {
   return (
     <section>
-      <h3 className="font-serif-display mb-3 text-xl font-medium tracking-tight text-foreground">
+      <h3 className="mb-3 font-serif-display text-xl font-medium tracking-tight text-foreground">
         {title}
       </h3>
       <ul className="space-y-3">
-        {items.map((it, i) => {
-          const recordId = it.recordIds[0] ?? "";
+        {items.map((item, index) => {
           const isSelected =
-            selectedRecordId !== null && it.recordIds.includes(selectedRecordId);
+            selectedRecordId !== null && item.recordIds.includes(selectedRecordId);
           return (
-            <li key={i}>
-              <button
-                type="button"
-                onClick={() => recordId && onSelect(recordId)}
+            <li key={`${title}-${index}`}>
+              <div
                 className={cn(
-                  "block w-full rounded-md border border-l-2 px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card",
+                  "rounded-md border border-l-2 px-4 py-3",
                   isSelected
-                    ? "border-sky-500/60 border-l-sky-500 bg-sky-500/10 ring-2 ring-sky-500/50"
-                    : "border-border/70 border-l-primary bg-secondary/30 hover:bg-secondary/60",
+                    ? "border-sky-500/60 border-l-sky-500 bg-sky-500/10"
+                    : "border-border/70 border-l-primary bg-secondary/30",
                 )}
               >
-                <p className="text-sm leading-relaxed text-foreground/90">{it.text}</p>
-              </button>
+                <p className="text-sm leading-relaxed text-foreground/90">{item.text}</p>
+                <ClaimCitations
+                  claim={item}
+                  selectedRecordId={selectedRecordId}
+                  onSelect={onSelect}
+                />
+              </div>
             </li>
           );
         })}
@@ -736,9 +489,14 @@ function MemoSection({
   );
 }
 
-function ReceiptCell({ receipt, paymentMode }: { receipt: string; paymentMode: "mock" | "live" }) {
-  const isLive = paymentMode === "live";
-  if (isLive) {
+function ReceiptCell({
+  receipt,
+  paymentMode,
+}: {
+  receipt: string;
+  paymentMode: "mock" | "live";
+}) {
+  if (paymentMode === "live") {
     return (
       <a
         href={`https://basescan.org/tx/${receipt}`}
@@ -746,71 +504,59 @@ function ReceiptCell({ receipt, paymentMode }: { receipt: string; paymentMode: "
         rel="noreferrer"
         className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 font-mono text-xs text-primary hover:bg-primary/20"
       >
-        {receipt.slice(0, 8)}…
+        {receipt.slice(0, 8)}...
         <ExternalLink className="h-3 w-3" />
       </a>
     );
   }
+
   return (
-    <Badge
-      variant="outline"
-      className="border-amber-500/40 bg-amber-500/10 font-medium uppercase tracking-wider text-amber-700"
-    >
+    <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700">
       Simulated
     </Badge>
   );
 }
 
-function AgentDot({ agent }: { agent: AgentKey }) {
-  const meta = TIMELINE_AGENT[agent];
+function AgentBadge({ agent }: { agent: AgentKey }) {
   return (
-    <span
-      className="inline-flex items-center gap-2"
-      aria-label={`Agent: ${meta.label}`}
-    >
-      <span
-        aria-hidden="true"
-        className="h-2 w-2 rounded-full ring-2 ring-offset-1 ring-offset-card"
-        style={{ background: meta.border, boxShadow: `0 0 0 1px ${meta.border}33` }}
-      />
-      <span className="text-sm font-medium text-foreground">{meta.label}</span>
+    <span className="inline-flex items-center gap-2">
+      <span className={cn("h-2 w-2 rounded-full", AGENT_META[agent].color)} />
+      <span className="text-sm font-medium text-foreground">{AGENT_META[agent].label}</span>
     </span>
   );
 }
 
 function FindingCell({ row }: { row: EvidenceRow }) {
   const [open, setOpen] = useState(false);
+
   return (
     <div>
-      <p
-        className={cn(
-          "text-sm leading-relaxed text-foreground/90",
-          !open && "line-clamp-2",
-        )}
-      >
+      <p className={cn("text-sm leading-relaxed text-foreground/90", !open && "line-clamp-2")}>
         {row.finding}
       </p>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        {row.sources.map((s, j) => (
+        {row.sources.map((source) => (
           <a
-            key={j}
-            href={s.url}
+            key={source.url}
+            href={source.url}
+            target="_blank"
+            rel="noreferrer"
             className="inline-flex items-center gap-1 rounded border border-border/70 bg-background px-1.5 py-0.5 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-primary"
           >
             <ExternalLink className="h-2.5 w-2.5" />
-            {s.label}
+            {source.label}
           </a>
         ))}
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="ml-1 inline-flex items-center gap-0.5 text-[11px] font-medium text-primary hover:underline"
-        >
-          {open ? "Show less" : "Show more"}
-          <ChevronDown
-            className={cn("h-3 w-3 transition-transform", open && "rotate-180")}
-          />
-        </button>
+        {row.finding.length > 120 ? (
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            className="ml-1 inline-flex items-center gap-0.5 text-[11px] font-medium text-primary hover:underline"
+          >
+            {open ? "Show less" : "Show more"}
+            <ChevronDown className={cn("h-3 w-3 transition-transform", open && "rotate-180")} />
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -825,7 +571,8 @@ function EvidenceLedger({
   selectedRecordId: string | null;
   onSelect: (recordId: string | null) => void;
 }) {
-  const totalCost = rows.reduce((s, r) => s + r.cost, 0);
+  const totalCost = rows.reduce((sum, row) => sum + row.cost, 0);
+
   return (
     <Card id="evidence-records" className="border-border/70 bg-card scroll-mt-6">
       <CardHeader className="pb-3">
@@ -835,12 +582,12 @@ function EvidenceLedger({
               Evidence records
             </CardTitle>
             <p className="mt-1.5 text-sm text-foreground/80">
-              <span className="font-mono">{rows.length}</span> paid searches
-              <span className="mx-2 text-border">·</span>
+              <span className="font-mono">{rows.length}</span> record{rows.length === 1 ? "" : "s"}
+              <span className="mx-2 text-border">|</span>
               <span className="font-mono">${totalCost.toFixed(2)}</span> spent
             </p>
           </div>
-          {selectedRecordId && (
+          {selectedRecordId ? (
             <button
               type="button"
               onClick={() => onSelect(null)}
@@ -848,101 +595,103 @@ function EvidenceLedger({
             >
               Clear claim selection
             </button>
-          )}
+          ) : null}
         </div>
       </CardHeader>
       <CardContent className="px-0 pb-0 sm:px-2">
-        {/* Desktop: table with sticky header + zebra */}
-        <div className="hidden md:block">
-          <div className="max-h-[520px] overflow-auto rounded-b-md">
-            <Table>
-              <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_var(--border)]">
-                <TableRow className="border-0 hover:bg-transparent">
-                  <TableHead className="w-[130px] text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Agent
-                  </TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Query
-                  </TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Finding
-                  </TableHead>
-                  <TableHead className="w-[150px] text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Receipt
-                  </TableHead>
-                  <TableHead className="w-[90px] text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    Cost
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((row, i) => (
-                  <TableRow
-                    key={row.id}
-                    id={`record-${row.id}`}
-                    onClick={() => onSelect(selectedRecordId === row.id ? null : row.id)}
-                    className={cn(
-                      "border-border/50 align-top cursor-pointer",
-                      i % 2 === 1 && "bg-secondary/25",
-                      selectedRecordId === row.id && "bg-sky-500/10 outline outline-2 -outline-offset-2 outline-sky-500/60",
-                    )}
-                  >
-                    <TableCell className="py-4">
-                      <AgentDot agent={row.agent} />
-                    </TableCell>
-                    <TableCell className="py-4 font-mono text-xs text-muted-foreground">
-                      {row.query}
-                    </TableCell>
-                    <TableCell className="py-4">
-                      <FindingCell row={row} />
-                    </TableCell>
-                    <TableCell className="py-4">
-                      <ReceiptCell receipt={row.receipt} paymentMode={row.paymentMode} />
-                    </TableCell>
-                    <TableCell className="py-4 text-right font-mono text-sm text-foreground">
-                      ${row.cost.toFixed(4)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+        {rows.length === 0 ? (
+          <div className="px-6 pb-6 text-sm text-muted-foreground">
+            No evidence records yet. If a run failed before evidence arrived, the timeline and error banner above will explain why.
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="hidden md:block">
+              <div className="max-h-[520px] overflow-auto rounded-b-md">
+                <Table>
+                  <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_var(--border)]">
+                    <TableRow className="border-0 hover:bg-transparent">
+                      <TableHead className="w-[130px] text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        Agent
+                      </TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        Query
+                      </TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        Finding
+                      </TableHead>
+                      <TableHead className="w-[150px] text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        Receipt
+                      </TableHead>
+                      <TableHead className="w-[90px] text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        Cost
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.map((row, index) => (
+                      <TableRow
+                        key={row.id}
+                        id={`record-${row.id}`}
+                        onClick={() => onSelect(selectedRecordId === row.id ? null : row.id)}
+                        className={cn(
+                          "cursor-pointer border-border/50 align-top",
+                          index % 2 === 1 && "bg-secondary/25",
+                          selectedRecordId === row.id && "bg-sky-500/10 outline outline-2 -outline-offset-2 outline-sky-500/60",
+                        )}
+                      >
+                        <TableCell className="py-4">
+                          <AgentBadge agent={row.agent} />
+                        </TableCell>
+                        <TableCell className="py-4 font-mono text-xs text-muted-foreground">
+                          {row.query}
+                        </TableCell>
+                        <TableCell className="py-4">
+                          <FindingCell row={row} />
+                        </TableCell>
+                        <TableCell className="py-4">
+                          <ReceiptCell receipt={row.receipt} paymentMode={row.paymentMode} />
+                        </TableCell>
+                        <TableCell className="py-4 text-right font-mono text-sm text-foreground">
+                          ${row.cost.toFixed(4)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
 
-        {/* Mobile: stacked cards */}
-        <ul className="space-y-3 px-3 pb-3 md:hidden">
-          {rows.map((row, i) => (
-            <li
-              key={row.id}
-              id={`record-m-${row.id}`}
-              onClick={() => onSelect(selectedRecordId === row.id ? null : row.id)}
-              className={cn(
-                "rounded-md border border-border/70 p-3 cursor-pointer",
-                i % 2 === 1 ? "bg-secondary/30" : "bg-background/40",
-                selectedRecordId === row.id && "border-sky-500/60 bg-sky-500/10 ring-2 ring-sky-500/40",
-              )}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <AgentDot agent={row.agent} />
-                <span className="font-mono text-sm text-foreground">
-                  ${row.cost.toFixed(4)}
-                </span>
-              </div>
-              <p className="mt-2 font-mono text-[11px] text-muted-foreground">
-                {row.query}
-              </p>
-              <div className="mt-2">
-                <FindingCell row={row} />
-              </div>
-              <div className="mt-3 flex items-center justify-between">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                  Receipt
-                </span>
-                <ReceiptCell receipt={row.receipt} paymentMode={row.paymentMode} />
-              </div>
-            </li>
-          ))}
-        </ul>
+            <ul className="space-y-3 px-3 pb-3 md:hidden">
+              {rows.map((row, index) => (
+                <li
+                  key={row.id}
+                  id={`record-m-${row.id}`}
+                  onClick={() => onSelect(selectedRecordId === row.id ? null : row.id)}
+                  className={cn(
+                    "cursor-pointer rounded-md border border-border/70 p-3",
+                    index % 2 === 1 ? "bg-secondary/30" : "bg-background/40",
+                    selectedRecordId === row.id && "border-sky-500/60 bg-sky-500/10 ring-2 ring-sky-500/40",
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <AgentBadge agent={row.agent} />
+                    <span className="font-mono text-sm text-foreground">${row.cost.toFixed(4)}</span>
+                  </div>
+                  <p className="mt-2 font-mono text-[11px] text-muted-foreground">{row.query}</p>
+                  <div className="mt-2">
+                    <FindingCell row={row} />
+                  </div>
+                  <div className="mt-3 flex items-center justify-between">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                      Receipt
+                    </span>
+                    <ReceiptCell receipt={row.receipt} paymentMode={row.paymentMode} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </CardContent>
     </Card>
   );
@@ -966,8 +715,8 @@ function MemoSkeleton() {
         </div>
         <Separator />
         <div className="grid grid-cols-1 gap-x-10 gap-y-8 md:grid-cols-2">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="space-y-3">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="space-y-3">
               <Skeleton className="h-6 w-32" />
               <Skeleton className="h-20 w-full rounded-md" />
               <Skeleton className="h-20 w-full rounded-md" />
@@ -992,8 +741,8 @@ function LedgerSkeleton() {
         </div>
       </CardHeader>
       <CardContent className="space-y-3 px-3 pb-4 sm:px-5">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="flex items-start gap-4 rounded-md border border-border/60 p-3">
+        {Array.from({ length: 3 }).map((_, index) => (
+          <div key={index} className="flex items-start gap-4 rounded-md border border-border/60 p-3">
             <Skeleton className="h-4 w-20" />
             <div className="flex-1 space-y-2">
               <Skeleton className="h-3 w-2/3" />
@@ -1013,33 +762,50 @@ function RunHistory({
   rows,
   selectedRunId,
   onReload,
+  onClearHistory,
 }: {
   rows: DashboardHistoryRow[];
   selectedRunId: string | null;
   onReload: (row: DashboardHistoryRow) => void;
+  onClearHistory: () => void;
 }) {
   const verdictStyle = {
     buy: "bg-emerald-600/10 text-emerald-700 border-emerald-600/30",
     do_not_buy: "bg-red-600/10 text-red-700 border-red-600/30",
     need_more_evidence: "bg-amber-500/10 text-amber-700 border-amber-500/30",
   } as const;
-  const [activeRunId, setActiveRunId] = useState<string | null>(selectedRunId ?? rows[0]?.id ?? null);
+  const [activeRunId, setActiveRunId] = useState<string | null>(
+    selectedRunId ?? rows[0]?.id ?? null,
+  );
 
   useEffect(() => {
     if (selectedRunId) {
       setActiveRunId(selectedRunId);
     }
   }, [selectedRunId]);
+
   return (
-    <Card className="border-border/70 bg-card">
+    <Card id="compare-runs" className="border-border/70 bg-card">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          <History className="h-4 w-4" />
-          Local run history
-          <span className="ml-auto text-[10px] font-normal tracking-normal text-muted-foreground/70">
+        <div className="flex items-center gap-3">
+          <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <History className="h-4 w-4" />
+            Local run history
+          </CardTitle>
+          <span className="text-[10px] font-normal tracking-normal text-muted-foreground/70">
             stored in this browser
           </span>
-        </CardTitle>
+          {rows.length > 0 ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClearHistory}
+              className="ml-auto h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              Clear history
+            </Button>
+          ) : null}
+        </div>
       </CardHeader>
       <CardContent className="pt-0">
         {rows.length === 0 ? (
@@ -1048,67 +814,82 @@ function RunHistory({
           </p>
         ) : (
           <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {rows.map((r) => (
-              <li key={r.id}>
+            {rows.map((row) => (
+              <li key={row.id}>
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveRunId(r.id);
-                    onReload(r);
+                    setActiveRunId(row.id);
+                    onReload(row);
                   }}
-                  aria-pressed={activeRunId === r.id}
-                  style={
-                    activeRunId === r.id
-                      ? { backgroundColor: "rgba(37,99,235,0.08)" }
-                      : undefined
-                  }
+                  aria-pressed={activeRunId === row.id}
                   className={cn(
                     "group block w-full rounded-lg border p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card",
-                    activeRunId === r.id
-                      ? "border-blue-600/60 ring-1 ring-blue-600/30"
+                    activeRunId === row.id
+                      ? "border-blue-600/60 bg-blue-600/5 ring-1 ring-blue-600/30"
                       : "border-border/70 bg-secondary/20 hover:border-primary/40 hover:bg-secondary/40",
                   )}
-                  aria-label={`Reload run on ${r.subject}`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="font-serif-display text-lg leading-tight text-foreground">
-                        {r.subject}
+                        {row.subject}
                       </div>
                       <div className="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                        {r.policy} · cap ${r.budget.toFixed(2)}
+                        {row.policy} | cap ${row.budget.toFixed(2)}
                       </div>
                     </div>
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "shrink-0 text-[10px] uppercase tracking-wider",
-                        r.mode === "mock"
-                          ? "border-amber-500/40 bg-amber-500/10 text-amber-700"
-                          : "border-primary/40 bg-primary/10 text-primary",
-                      )}
-                    >
-                      {r.mode}
-                    </Badge>
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "text-[10px] uppercase tracking-wider",
+                          row.mode === "mock"
+                            ? "border-amber-500/40 bg-amber-500/10 text-amber-700"
+                            : "border-primary/40 bg-primary/10 text-primary",
+                        )}
+                      >
+                        {row.mode}
+                      </Badge>
+                      {row.webhookStatus ? (
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "text-[10px] uppercase tracking-wider",
+                            row.webhookStatus === "delivered"
+                              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700"
+                              : row.webhookStatus === "failed"
+                                ? "border-red-500/40 bg-red-500/10 text-red-700"
+                                : "border-border/70 bg-background text-muted-foreground",
+                          )}
+                        >
+                          webhook {row.webhookStatus}
+                        </Badge>
+                      ) : null}
+                    </div>
                   </div>
                   <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                    {r.question}
+                    {row.question}
                   </p>
                   <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border/60 pt-3">
-                    <Badge variant="outline" className={cn("font-medium capitalize", verdictStyle[r.recommendation])}>
-                      {r.recommendation.replace(/_/g, " ")}
+                    <Badge variant="outline" className={cn("font-medium capitalize", verdictStyle[row.recommendation])}>
+                      {row.recommendation.replace(/_/g, " ")}
                     </Badge>
                     <div className="ml-auto flex items-center gap-3 font-mono text-[11px]">
                       <span className="text-foreground">
-                        <span className="text-muted-foreground">spend</span> ${r.spendUsd.toFixed(3)}
+                        <span className="text-muted-foreground">spend</span> ${row.spendUsd.toFixed(3)}
                       </span>
-                      <span className="text-border">·</span>
+                      <span className="text-border">|</span>
                       <span className="text-foreground">
-                        <span className="text-muted-foreground">records</span> {r.records}
+                        <span className="text-muted-foreground">calls</span> {row.paidCalls}
                       </span>
-                      <span className="text-border">·</span>
+                      <span className="text-border">|</span>
                       <span className="text-foreground">
-                        <span className="text-muted-foreground">conf</span> {r.confidence}%
+                        <span className="text-muted-foreground">records</span> {row.records}
+                      </span>
+                      <span className="text-border">|</span>
+                      <span className="text-foreground">
+                        <span className="text-muted-foreground">conf</span> {row.confidence}%
                       </span>
                     </div>
                   </div>
@@ -1123,12 +904,14 @@ function RunHistory({
 }
 
 function ProofPacketExport({
-  onExport,
+  onExportJson,
+  onExportMarkdown,
   onShareLink,
   recordCount,
   spentUsd,
 }: {
-  onExport: (fmt: "json" | "md") => void;
+  onExportJson: () => void;
+  onExportMarkdown: () => void;
   onShareLink: () => Promise<void>;
   recordCount: number;
   spentUsd: number;
@@ -1139,38 +922,25 @@ function ProofPacketExport({
         Proof packet
       </span>
       <span className="hidden text-[11px] text-muted-foreground sm:inline">
-        memo · {recordCount} records · ${spentUsd.toFixed(2)} spent
+        memo | {recordCount} records | ${spentUsd.toFixed(2)} spent
       </span>
       <div className="ml-auto flex gap-1.5">
         <Button
           variant="outline"
           size="sm"
           onClick={() => {
-            void onShareLink().then(() => toast.success("Share link copied"));
+            void onShareLink();
           }}
           className="h-8 gap-1.5 text-xs"
-          aria-label="Copy share link"
         >
           <Link2 className="h-3.5 w-3.5" />
           Copy share link
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => onExport("json")}
-          className="h-8 gap-1.5 text-xs text-primary hover:bg-primary/10"
-          aria-label="Download proof packet as JSON"
-        >
+        <Button variant="ghost" size="sm" onClick={onExportJson} className="h-8 gap-1.5 text-xs text-primary hover:bg-primary/10">
           <FileJson className="h-3.5 w-3.5" />
           JSON
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => onExport("md")}
-          className="h-8 gap-1.5 text-xs text-primary hover:bg-primary/10"
-          aria-label="Download proof packet as Markdown"
-        >
+        <Button variant="ghost" size="sm" onClick={onExportMarkdown} className="h-8 gap-1.5 text-xs text-primary hover:bg-primary/10">
           <FileText className="h-3.5 w-3.5" />
           Markdown
         </Button>
@@ -1179,138 +949,91 @@ function ProofPacketExport({
   );
 }
 
-function ApiIntegrations() {
-  const snippet = `curl -N -X POST http://localhost:3000/api/run-diligence \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "question": "Is Apollo.io worth $99/mo for a 5-seat sales team?",
-    "budgetCapUsd": 0.25,
-    "policyProfile": "standard",
-    "callbackUrl": "https://example.com/webhook"
-  }'`;
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(snippet);
-      toast.success("Snippet copied");
-    } catch {
-      toast.error("Copy failed");
-    }
-  };
-
+function SafeSpendPanel({
+  events,
+  hasCompletedRun,
+}: {
+  events: SafeSpendRow[];
+  hasCompletedRun: boolean;
+}) {
   return (
     <Card className="border-border/70 bg-card">
       <CardHeader className="pb-3">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">
-          API &amp; Integrations
-        </span>
-        <CardTitle className="font-serif text-xl font-semibold tracking-tight">
-          ProofSpend for other agents
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          <ShieldCheck className="h-4 w-4" />
+          SafeSpend policy decisions
         </CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Stream a live SSE dashboard, or POST the final run JSON to your webhook when the memo is ready.
-        </p>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="relative overflow-hidden rounded-lg border border-white/10" style={{ backgroundColor: "#18211b" }}>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={copy}
-            className="absolute right-2 top-2 h-7 gap-1.5 text-[11px] text-white/80 hover:bg-white/10 hover:text-white"
-            aria-label="Copy curl snippet"
-          >
-            <FileText className="h-3.5 w-3.5" />
-            Copy
-          </Button>
-          <pre className="overflow-x-auto px-4 py-3 pr-20 font-mono text-[12px] leading-relaxed text-emerald-100">
-            <code>{snippet}</code>
-          </pre>
-        </div>
-        <ul className="space-y-2 text-sm">
-          <li className="flex gap-2">
-            <code className="rounded bg-secondary/40 px-1.5 py-0.5 text-[12px] font-mono text-primary">POST /api/run-diligence</code>
-            <span className="text-muted-foreground">SSE stream; ends with <code className="font-mono text-foreground">complete</code> event carrying the full run JSON.</span>
-          </li>
-          <li className="flex gap-2">
-            <code className="rounded bg-secondary/40 px-1.5 py-0.5 text-[12px] font-mono text-primary">GET /api/health</code>
-            <span className="text-muted-foreground">Reports payment mode, policy profile, and active LLM provider.</span>
-          </li>
-          <li className="flex gap-2">
-            <code className="rounded bg-secondary/40 px-1.5 py-0.5 text-[12px] font-mono text-primary">callbackUrl</code>
-            <span className="text-muted-foreground">Receives a POST with the final run JSON after completion.</span>
-          </li>
-        </ul>
+      <CardContent className="px-0 pb-0">
+        {events.length === 0 ? (
+          <div className="px-6 pb-6 text-sm text-muted-foreground">
+            {hasCompletedRun
+              ? "No policy events were recorded for this run."
+              : "Policy checks will appear here before and after paid searches run."}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  {["Event", "Agent", "Action", "Status", "Reason / preview", "Projected"].map((heading) => (
+                    <TableHead key={heading} className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      {heading}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {events.map((event, index) => {
+                  const blocked = event.status === "blocked";
+                  return (
+                    <TableRow key={`${event.action}-${index}`} className={cn("border-border/50 align-top", blocked && "bg-red-500/[0.06]")}>
+                      <TableCell className="py-3">
+                        <span className="font-mono text-[11px] text-muted-foreground">{event.kind}</span>
+                      </TableCell>
+                      <TableCell className="py-3 text-sm">
+                        {event.agent === "system" ? (
+                          <span className="text-muted-foreground">system</span>
+                        ) : (
+                          <AgentBadge agent={event.agent} />
+                        )}
+                      </TableCell>
+                      <TableCell className="py-3 font-mono text-xs text-foreground/90">{event.action}</TableCell>
+                      <TableCell className="py-3">
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "text-[10px] uppercase tracking-wider",
+                            blocked
+                              ? "border-red-500/40 bg-red-500/10 text-red-700"
+                              : "border-emerald-600/30 bg-emerald-600/10 text-emerald-700",
+                          )}
+                        >
+                          {event.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="py-3">
+                        <div className={cn("text-sm", blocked ? "text-red-900" : "text-foreground/90")}>
+                          {event.reason}
+                        </div>
+                        {event.queryPreview ? (
+                          <div className="mt-0.5 line-clamp-1 font-mono text-[11px] text-muted-foreground">
+                            {event.queryPreview}
+                          </div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="py-3 text-right font-mono text-sm">
+                        ${event.projectedSpendUsd.toFixed(4)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </CardContent>
     </Card>
-  );
-}
-
-function VendorColumn({ v }: { v: CompareVendor }) {
-  const verdictStyle = {
-    buy: "bg-emerald-600/10 text-emerald-700 border-emerald-600/30",
-    do_not_buy: "bg-red-600/10 text-red-700 border-red-600/30",
-    need_more_evidence: "bg-amber-500/10 text-amber-700 border-amber-500/30",
-  } as const;
-  return (
-    <div className="rounded-lg border border-border/70 bg-secondary/20 p-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <h4 className="font-serif-display text-xl text-foreground">{v.subject}</h4>
-        <Badge
-          variant="outline"
-          className={cn(
-            "ml-auto text-[10px] uppercase tracking-wider",
-            v.mode === "mock"
-              ? "border-amber-500/40 bg-amber-500/10 text-amber-700"
-              : "border-primary/40 bg-primary/10 text-primary",
-          )}
-        >
-          {v.mode}
-        </Badge>
-        <Badge variant="outline" className="text-[10px] uppercase tracking-wider text-muted-foreground">
-          {v.policy}
-        </Badge>
-      </div>
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <div className="rounded-md border border-border/60 bg-card/60 p-3">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Recommendation
-          </div>
-          <Badge
-            variant="outline"
-            className={cn("mt-1.5 font-medium capitalize", verdictStyle[v.recommendation])}
-          >
-            {v.recommendation.replace(/_/g, " ")}
-          </Badge>
-        </div>
-        <div className="rounded-md border border-border/60 bg-card/60 p-3">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Confidence
-          </div>
-          <div className="mt-1 font-serif-display text-2xl text-foreground">{v.confidence}%</div>
-        </div>
-        <div className="rounded-md border border-border/60 bg-card/60 p-3">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Spend
-          </div>
-          <div className="mt-1 font-mono text-lg text-foreground">${v.spendUsd.toFixed(2)}</div>
-        </div>
-        <div className="rounded-md border border-border/60 bg-card/60 p-3">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Evidence
-          </div>
-          <div className="mt-1 font-mono text-lg text-foreground">
-            {v.records} <span className="text-xs text-muted-foreground">records</span>
-          </div>
-        </div>
-      </div>
-      <div className="mt-4">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-          Rationale
-        </div>
-        <p className="mt-1.5 text-sm leading-relaxed text-foreground/85">{v.rationale}</p>
-      </div>
-    </div>
   );
 }
 
@@ -1330,30 +1053,29 @@ function VendorCompare({
   historyCount: number;
 }) {
   const hasEnough = historyCount >= 2 && currentVendor && compareVendor;
+
   return (
     <Card className="border-border/70 bg-card">
-      <CardHeader className="pb-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <CardHeader className="pb-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-primary">
-              Compare vendors
-            </div>
-            <p className="mt-1.5 max-w-xl text-sm text-muted-foreground">
-              Put two diligence runs side by side to compare recommendation, spend, and evidence depth.
+            <CardTitle className="text-sm font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Compare runs
+            </CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Compare recommendation, spend, and evidence depth.
             </p>
           </div>
-          {hasEnough && compareOptions.length > 0 && (
+          {hasEnough && compareOptions.length > 0 ? (
             <div className="flex items-center gap-2">
-              <label
-                htmlFor="compare-vendor"
-                className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground"
-              >
+              <label htmlFor="compare-vendor" className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 Compare against
               </label>
               <Select value={compareRunId} onValueChange={onCompareRunChange}>
                 <SelectTrigger
                   id="compare-vendor"
-                  className="h-9 w-[210px] border-border/80 bg-background/60"
+                  aria-label="Compare against saved run"
+                  className="h-9 w-[240px] border-border/80 bg-background/60"
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -1366,14 +1088,42 @@ function VendorCompare({
                 </SelectContent>
               </Select>
             </div>
-          )}
+          ) : null}
         </div>
       </CardHeader>
       <CardContent>
         {hasEnough ? (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <VendorColumn v={currentVendor!} />
-            <VendorColumn v={compareVendor!} />
+            {[currentVendor, compareVendor].map((vendor) => (
+              <div key={vendor!.id} className="rounded-lg border border-border/70 bg-secondary/20 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-serif-display text-lg text-foreground">{vendor?.subject}</div>
+                    <div className="mt-1 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                      {vendor?.mode} | {vendor?.policy}
+                    </div>
+                  </div>
+                  <Badge variant="outline" className="capitalize">
+                    {vendor?.recommendation.replace(/_/g, " ")}
+                  </Badge>
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-3 text-center">
+                  <div className="rounded-md border border-border/60 bg-background/60 p-2">
+                    <div className="font-mono text-lg text-foreground">{vendor?.confidence}%</div>
+                    <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">confidence</div>
+                  </div>
+                  <div className="rounded-md border border-border/60 bg-background/60 p-2">
+                    <div className="font-mono text-lg text-foreground">${vendor?.spendUsd.toFixed(2)}</div>
+                    <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">spend</div>
+                  </div>
+                  <div className="rounded-md border border-border/60 bg-background/60 p-2">
+                    <div className="font-mono text-lg text-foreground">{vendor?.records}</div>
+                    <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">records</div>
+                  </div>
+                </div>
+                <p className="mt-4 text-sm leading-relaxed text-muted-foreground">{vendor?.rationale}</p>
+              </div>
+            ))}
           </div>
         ) : (
           <div className="rounded-md border border-dashed border-border bg-secondary/20 px-4 py-8 text-center text-sm text-muted-foreground">
@@ -1385,84 +1135,301 @@ function VendorCompare({
   );
 }
 
-function SafeSpendPanel({ events }: { events: SafeSpendRow[] }) {
+function ApiIntegrations() {
+  const snippet = `curl -N -X POST http://localhost:3000/api/run-diligence \\
+  -H "Authorization: Bearer <PROOFSPEND_API_KEY>" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "question": "Is Apollo.io worth $99/mo for a 5-seat sales team?",
+    "budgetCapUsd": 0.25,
+    "policyProfile": "standard",
+    "callbackUrl": "https://example.com/webhook"
+  }'`;
+  const restSnippet = `curl -X POST "http://localhost:3000/api/run-diligence?stream=false" \\
+    -H "Authorization: Bearer <PROOFSPEND_API_KEY>" \\
+    -H "Content-Type: application/json" \\
+  -d '{
+    "question": "Is Apollo.io worth $99/mo for a 5-seat sales team?",
+    "budgetCapUsd": 0.25,
+      "policyProfile": "standard",
+      "stream": false
+    }'`;
+  const verifySnippet = `curl -X POST http://localhost:3000/api/verify-proof \\
+    -H "Content-Type: application/json" \\
+    -d '{
+      "proofPacket": {
+        "metadata": {
+          "attestation": {
+            "formatVersion": 1,
+            "canonicalizer": "proofspend.run.v1",
+            "digestAlgorithm": "SHA-256",
+            "digest": "<digest>",
+            "signedAt": "<timestamp>",
+            "signingMode": "digest-only"
+          }
+        },
+        "run": { "...": "proof packet run payload" }
+      }
+    }'`;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(snippet);
+      toast.success("Snippet copied");
+    } catch {
+      toast.error("Copy failed");
+    }
+  };
+
+  return (
+    <Card id="api-integrations" className="border-border/70 bg-card">
+      <CardHeader className="pb-3">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">
+          API &amp; Integrations
+        </span>
+        <CardTitle className="font-serif-display text-xl font-medium tracking-tight">
+          ProofSpend for other agents
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Stream SSE in the UI, request final JSON in REST mode, or POST the final run JSON to a webhook when the memo is ready.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-md border border-border/70 bg-secondary/20 p-3">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              SSE mode
+            </div>
+            <div className="mt-1 text-sm text-foreground/90">
+              Default UI mode using streamed run events from <span className="font-mono">POST /api/run-diligence</span>.
+            </div>
+          </div>
+          <div className="rounded-md border border-border/70 bg-secondary/20 p-3">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              REST mode
+            </div>
+            <div className="mt-1 text-sm text-foreground/90">
+              Use <span className="font-mono">?stream=false</span> or body <span className="font-mono">{`"stream": false`}</span> to receive the final run JSON directly.
+            </div>
+          </div>
+          <div className="rounded-md border border-border/70 bg-secondary/20 p-3">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Trust + Webhooks
+            </div>
+            <div className="mt-1 text-sm text-foreground/90">
+              When <span className="font-mono">PROOFSPEND_API_KEY</span> is set, callers must send a bearer token. Snapshot links and proof packets now carry attestations, and callback delivery retries automatically with signature headers when a secret is configured.
+            </div>
+          </div>
+        </div>
+        <div className="overflow-hidden rounded-lg border border-white/10 bg-[#18211b]">
+          <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
+            <div className="text-[10px] uppercase tracking-[0.16em] text-white/50">curl example</div>
+            <Button variant="ghost" size="sm" onClick={() => void copy()} className="h-7 text-xs text-white hover:bg-white/10 hover:text-white">
+              Copy
+            </Button>
+          </div>
+          <pre className="overflow-x-auto p-4 text-xs leading-relaxed text-white/80">
+            <code>{snippet}</code>
+          </pre>
+        </div>
+        <div className="overflow-hidden rounded-lg border border-border/70 bg-secondary/20">
+          <div className="border-b border-border/70 px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+            REST response example
+          </div>
+          <pre className="overflow-x-auto p-4 text-xs leading-relaxed text-foreground/80">
+            <code>{restSnippet}</code>
+          </pre>
+        </div>
+        <div className="overflow-hidden rounded-lg border border-border/70 bg-secondary/20">
+          <div className="border-b border-border/70 px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+            Verification example
+          </div>
+          <pre className="overflow-x-auto p-4 text-xs leading-relaxed text-foreground/80">
+            <code>{verifySnippet}</code>
+          </pre>
+        </div>
+        <div className="rounded-md border border-border/70 bg-secondary/20 p-3 text-sm text-muted-foreground">
+          Spec endpoint: <span className="font-mono">GET /api/openapi</span>. MCP endpoint: <span className="font-mono">POST /api/mcp</span>. Trust endpoints: <span className="font-mono">POST /api/sign-snapshot</span> and <span className="font-mono">POST /api/verify-proof</span>. Signed delivery headers: <span className="font-mono">X-ProofSpend-Timestamp</span> and, when <span className="font-mono">WEBHOOK_SECRET</span> is set, <span className="font-mono">X-ProofSpend-Signature</span>.
+        </div>
+        <div className="rounded-md border border-border/70 bg-secondary/20 p-3 text-sm text-muted-foreground">
+          Recent webhook outcomes flow into local history badges and <span className="font-mono">GET /api/health</span> diagnostics so you can confirm callback delivery without leaving the app.
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ScheduleConsole({
+  schedules,
+  onCreateSchedule,
+  onDeleteSchedule,
+  onToggleSchedule,
+  onRunScheduleNow,
+}: {
+  schedules: ScheduleTemplate[];
+  onCreateSchedule: (intervalMinutes: number) => void;
+  onDeleteSchedule: (scheduleId: string) => void;
+  onToggleSchedule: (scheduleId: string, enabled: boolean) => void;
+  onRunScheduleNow: (scheduleId: string) => void;
+}) {
+  const [intervalMinutes, setIntervalMinutes] = useState(60);
+
   return (
     <Card className="border-border/70 bg-card">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          <ShieldCheck className="h-4 w-4" />
-          SafeSpend policy decisions
-          <span className="ml-auto text-[10px] font-normal tracking-normal text-muted-foreground/70">
-            preflight gate
-          </span>
+        <CardTitle className="text-sm font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Scheduled diligence
         </CardTitle>
       </CardHeader>
-      <CardContent className="px-0 pb-0">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                {["Event", "Agent", "Action", "Status", "Reason / preview", "Projected"].map((h) => (
-                  <TableHead key={h} className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                    {h}
-                  </TableHead>
-                ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {events.map((e, i) => {
-                const blocked = e.status === "blocked";
-                return (
-                  <TableRow
-                    key={i}
-                    className={cn(
-                      "border-border/50 align-top",
-                      blocked && "bg-red-500/[0.06]",
-                    )}
-                  >
-                    <TableCell className="py-3">
-                      <span className="font-mono text-[11px] text-muted-foreground">{e.kind}</span>
-                    </TableCell>
-                    <TableCell className="py-3 text-sm">
-                      {e.agent === "system" ? (
-                        <span className="text-muted-foreground">system</span>
-                      ) : (
-                        <AgentDot agent={e.agent} />
-                      )}
-                    </TableCell>
-                    <TableCell className="py-3 font-mono text-xs text-foreground/90">{e.action}</TableCell>
-                    <TableCell className="py-3">
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          "text-[10px] uppercase tracking-wider",
-                          blocked
-                            ? "border-red-500/40 bg-red-500/10 text-red-700"
-                            : "border-emerald-600/30 bg-emerald-600/10 text-emerald-700",
-                        )}
-                      >
-                        {e.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="py-3">
-                      <div className={cn("text-sm", blocked ? "text-red-900" : "text-foreground/90")}>
-                        {e.reason}
-                      </div>
-                      {e.queryPreview && (
-                        <div className="mt-0.5 font-mono text-[11px] text-muted-foreground line-clamp-1">
-                          {e.queryPreview}
-                        </div>
-                      )}
-                    </TableCell>
-                    <TableCell className="py-3 text-right font-mono text-sm">
-                      ${e.projectedSpendUsd.toFixed(4)}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+      <CardContent className="space-y-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end">
+          <div className="space-y-1">
+            <label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Interval (minutes)
+            </label>
+            <Input
+              type="number"
+              min="5"
+              step="5"
+              value={intervalMinutes}
+              onChange={(event) => setIntervalMinutes(Math.max(5, Number(event.target.value) || 5))}
+              className="w-[180px]"
+            />
+          </div>
+          <Button type="button" onClick={() => onCreateSchedule(intervalMinutes)}>
+            Save current form as schedule
+          </Button>
         </div>
+
+        {schedules.length === 0 ? (
+          <div className="text-sm text-muted-foreground">
+            No schedules yet. Save the current diligence form to run it repeatedly in this server process.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {schedules.map((schedule) => (
+              <div key={schedule.id} className="rounded-lg border border-border/70 bg-secondary/20 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="space-y-1">
+                    <div className="font-medium text-foreground">{schedule.label}</div>
+                    <div className="text-xs text-muted-foreground">
+                      every {schedule.intervalMinutes} min | next {new Date(schedule.nextRunAt).toLocaleString()}
+                    </div>
+                    <div className="text-xs text-muted-foreground line-clamp-2">{schedule.question}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="outline" className={schedule.enabled ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700" : "border-border/70 bg-background text-muted-foreground"}>
+                      {schedule.enabled ? "enabled" : "paused"}
+                    </Badge>
+                    {schedule.lastStatus ? (
+                      <Badge variant="outline" className={schedule.lastStatus === "success" ? "border-primary/40 bg-primary/10 text-primary" : "border-red-500/40 bg-red-500/10 text-red-700"}>
+                        last {schedule.lastStatus}
+                      </Badge>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => onRunScheduleNow(schedule.id)}>
+                    Run now
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => onToggleSchedule(schedule.id, !schedule.enabled)}>
+                    {schedule.enabled ? "Pause" : "Enable"}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => onDeleteSchedule(schedule.id)}>
+                    Delete
+                  </Button>
+                </div>
+                {schedule.lastError ? (
+                  <div className="mt-2 text-xs text-red-700">{schedule.lastError}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function WebhookConsole({
+  deliveries,
+  onRetryWebhook,
+}: {
+  deliveries: WebhookDeliveryStatus[];
+  onRetryWebhook: (deliveryId: string) => void;
+}) {
+  return (
+    <Card className="border-border/70 bg-card">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Webhook delivery console
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {deliveries.length === 0 ? (
+          <div className="text-sm text-muted-foreground">
+            No webhook deliveries yet. Callback outcomes will appear here after runs with a callback URL.
+          </div>
+        ) : (
+          deliveries.map((delivery) => (
+            <div key={delivery.id} className="rounded-lg border border-border/70 bg-secondary/20 p-4">
+              <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                <div className="space-y-1">
+                  <div className="font-mono text-xs text-foreground">{delivery.callbackUrl}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {new Date(delivery.deliveredAt).toLocaleString()} | attempts {delivery.attempts}
+                    {delivery.httpStatus ? ` | status ${delivery.httpStatus}` : ""}
+                  </div>
+                  {delivery.error ? <div className="text-xs text-red-700">{delivery.error}</div> : null}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="outline" className={delivery.status === "delivered" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700" : delivery.status === "failed" ? "border-red-500/40 bg-red-500/10 text-red-700" : "border-border/70 bg-background text-muted-foreground"}>
+                    {delivery.status}
+                  </Badge>
+                  <Button variant="outline" size="sm" onClick={() => onRetryWebhook(delivery.id)}>
+                    Retry
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ObservabilityConsole({ events }: { events: ObservabilityEvent[] }) {
+  return (
+    <Card className="border-border/70 bg-card">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Observability
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {events.length === 0 ? (
+          <div className="text-sm text-muted-foreground">
+            No observability events yet. Runs, schedules, webhook retries, proof verification, and MCP activity will appear here.
+          </div>
+        ) : (
+          events.map((event) => (
+            <div key={event.id} className="rounded-lg border border-border/70 bg-secondary/20 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                  {event.category}
+                </div>
+                <Badge variant="outline" className={event.status === "success" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700" : event.status === "error" ? "border-red-500/40 bg-red-500/10 text-red-700" : "border-border/70 bg-background text-muted-foreground"}>
+                  {event.status}
+                </Badge>
+              </div>
+              <div className="mt-2 text-sm text-foreground">{event.message}</div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                {new Date(event.timestamp).toLocaleString()}
+              </div>
+            </div>
+          ))
+        )}
       </CardContent>
     </Card>
   );
@@ -1475,6 +1442,11 @@ export function ProofSpendDashboard({
   onBudgetChange,
   policyProfile,
   onPolicyChange,
+  callbackUrl,
+  onCallbackUrlChange,
+  exampleQuestions,
+  onDemoRun,
+  demoRunDisabled,
   isRunning,
   onRun,
   error,
@@ -1488,6 +1460,7 @@ export function ProofSpendDashboard({
   historyRows,
   selectedRunId,
   onSelectHistory,
+  onClearHistory,
   currentVendor,
   compareVendor,
   compareOptions,
@@ -1499,26 +1472,36 @@ export function ProofSpendDashboard({
   onShareLink,
   onExportJson,
   onExportMarkdown,
+  health,
+  healthUnavailable,
+  estimate,
+  schedules,
+  onCreateSchedule,
+  onDeleteSchedule,
+  onToggleSchedule,
+  onRunScheduleNow,
+  onRetryWebhook,
+  observabilityEvents,
+  failureSummary,
   runIdLabel,
 }: ProofSpendDashboardProps) {
   const spentPct = Math.min(100, budgetCapUsd > 0 ? (spentUsd / budgetCapUsd) * 100 : 0);
   const overWarn = spentPct > 85;
-  const completed = showExport;
+  const hasCompletedRun = showExport || timelineEvents.some((event) => event.type === "complete");
 
   const handleSelectClaim = (recordId: string) => {
     onSelectRecord(selectedRecordId === recordId ? null : recordId);
     if (typeof document !== "undefined") {
-      const el =
-        document.getElementById(`record-${recordId}`) ||
+      const element =
+        document.getElementById(`record-${recordId}`) ??
         document.getElementById(`record-m-${recordId}`);
-      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      element?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   };
 
   return (
-    <main className="min-h-screen bg-background py-10 px-4 sm:px-6">
+    <main className="min-h-screen bg-background px-4 py-10 sm:px-6">
       <div className="mx-auto w-full max-w-[1200px] space-y-6">
-        {/* HERO + INPUT */}
         <Card className="overflow-hidden border-border/70 bg-card shadow-sm">
           <CardContent className="space-y-8 p-8 sm:p-10">
             <div className="flex items-start justify-between gap-4">
@@ -1527,15 +1510,18 @@ export function ProofSpendDashboard({
                   ProofSpend
                 </div>
                 <h1 className="font-serif-display text-4xl font-medium leading-[1.1] text-foreground sm:text-5xl">
-                  Receipt-backed research<br />for autonomous agents.
+                  Receipt-backed research
+                  <br />
+                  for autonomous agents.
                 </h1>
                 <p className="max-w-xl text-sm leading-relaxed text-muted-foreground sm:text-base">
-                  Set a budget cap, dispatch a panel of agents that pay for evidence via x402
-                  micropayments on Base, and get a memo where every claim links back to a settled receipt.
+                  Set a budget cap, dispatch paid search agents, and get a memo where every claim links back to evidence and a receipt.
                 </p>
               </div>
               <ModeBadge mode={mode} running={isRunning} />
             </div>
+
+            <StatusStrip health={health} healthUnavailable={healthUnavailable} />
 
             <Separator />
 
@@ -1547,7 +1533,7 @@ export function ProofSpendDashboard({
                 <Textarea
                   id="q"
                   value={question}
-                  onChange={(e) => onQuestionChange(e.target.value)}
+                  onChange={(event) => onQuestionChange(event.target.value)}
                   disabled={isRunning}
                   placeholder="Should I spend $500/month on Apollo.io for B2B lead generation?"
                   className="min-h-[96px] resize-none border-border/80 bg-background/60 text-base leading-relaxed"
@@ -1556,32 +1542,32 @@ export function ProofSpendDashboard({
                   <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                     Try
                   </span>
-                  {EXAMPLE_QUESTIONS.map((ex) => (
+                  {exampleQuestions.map((example) => (
                     <button
-                      key={ex.short}
+                      key={example.short}
                       type="button"
-                      onClick={() => onQuestionChange(ex.full)}
+                      onClick={() => onQuestionChange(example.full)}
                       disabled={isRunning}
-                      aria-label={`Use example: ${ex.full}`}
-                      className="rounded-full border border-border bg-background/70 px-3 py-1 text-xs text-foreground/80 transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+                      className="rounded-full border border-border bg-background/70 px-3 py-1 text-xs text-foreground/80 transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-foreground"
                     >
-                      {ex.short}
+                      {example.short}
                     </button>
                   ))}
                 </div>
               </div>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                <div className="space-y-2 sm:w-56">
-                  <label htmlFor="b" className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+
+              <div className="grid gap-3 lg:grid-cols-[220px_220px_1fr]">
+                <div className="space-y-2">
+                  <label htmlFor="budget" className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                     Budget cap (USD)
                   </label>
                   <Input
-                    id="b"
+                    id="budget"
                     type="number"
                     step="0.01"
                     min="0"
                     value={budgetCapUsd}
-                    onChange={(e) => onBudgetChange(parseFloat(e.target.value) || 0)}
+                    onChange={(event) => onBudgetChange(parseFloat(event.target.value) || 0)}
                     disabled={isRunning}
                     className="border-border/80 bg-background/60 font-mono"
                   />
@@ -1591,62 +1577,109 @@ export function ProofSpendDashboard({
                     Policy profile
                   </label>
                   <div role="radiogroup" aria-label="Policy profile" className="inline-flex rounded-md border border-border/80 bg-background/60 p-0.5">
-                    {(["standard", "strict"] as AppPolicyProfile[]).map((p) => (
+                    {(["standard", "strict"] as AppPolicyProfile[]).map((profile) => (
                       <button
-                        key={p}
+                        key={profile}
                         type="button"
                         role="radio"
-                        aria-checked={policyProfile === p}
-                        onClick={() => onPolicyChange(p)}
+                        aria-checked={policyProfile === profile}
+                        onClick={() => onPolicyChange(profile)}
                         disabled={isRunning}
                         className={cn(
-                          "rounded px-3 py-1.5 text-xs font-medium capitalize tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          policyProfile === p
+                          "rounded px-3 py-1.5 text-xs font-medium capitalize tracking-wide transition-colors",
+                          policyProfile === profile
                             ? "bg-primary text-primary-foreground shadow-sm"
                             : "text-muted-foreground hover:text-foreground",
                         )}
                       >
-                        {p}
+                        {profile}
                       </button>
                     ))}
                   </div>
                 </div>
+                <PreRunEstimate estimate={estimate} policyProfile={policyProfile} />
+              </div>
+
+              <div className="space-y-2">
+                <label htmlFor="callback-url" className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Callback URL (optional)
+                </label>
+                <Input
+                  id="callback-url"
+                  type="url"
+                  value={callbackUrl}
+                  onChange={(event) => onCallbackUrlChange(event.target.value)}
+                  disabled={isRunning}
+                  placeholder="https://example.com/webhook"
+                  className="border-border/80 bg-background/60"
+                />
+                <div className="text-xs text-muted-foreground">
+                  When provided, ProofSpend posts the final run JSON after completion.
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <Button
                   onClick={onRun}
                   disabled={isRunning}
-                  className="h-10 px-6 text-sm font-medium tracking-wide sm:ml-auto"
+                  aria-label="Run diligence"
+                  className="h-10 px-6 text-sm font-medium tracking-wide"
                 >
                   {isRunning ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Dispatching agents…
+                      Dispatching agents...
                     </>
                   ) : (
-                    <><Play className="mr-1.5 h-4 w-4" />Run diligence</>
+                    <>
+                      <Play className="mr-1.5 h-4 w-4" />
+                      Run diligence
+                    </>
                   )}
                 </Button>
+                <Button
+                  variant="outline"
+                  onClick={onDemoRun}
+                  disabled={isRunning || demoRunDisabled}
+                  aria-label="Run demo diligence"
+                  className="h-10 px-6 text-sm font-medium tracking-wide"
+                >
+                  <Rocket className="mr-1.5 h-4 w-4" />
+                  Demo run
+                </Button>
+                {demoRunDisabled ? (
+                  <span className="text-xs text-muted-foreground">
+                    Demo run requires mock mode so it stays safe on stage.
+                  </span>
+                ) : null}
               </div>
-              {error && (
+
+              {error ? (
                 <Alert variant="destructive">
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
-              )}
+              ) : null}
             </div>
           </CardContent>
         </Card>
 
-        {/* MOCK WATERMARK */}
-        {mode === "mock" && (
+        {mode === "mock" ? (
           <Alert className="border-amber-500/40 bg-amber-500/10 text-amber-900">
             <ShieldAlert className="h-4 w-4 !text-amber-700" />
             <AlertDescription className="text-amber-900">
-              Simulated receipts — mock mode; no on-chain Base payments were made.
+              Simulated receipts - mock mode; no on-chain Base payments were made.
             </AlertDescription>
           </Alert>
-        )}
+        ) : null}
 
-        {/* SPEND + TIMELINE */}
+        {failureSummary ? (
+          <Alert className="border-red-500/30 bg-red-500/10 text-red-900">
+            <AlertCircle className="h-4 w-4 !text-red-700" />
+            <AlertDescription>{failureSummary}</AlertDescription>
+          </Alert>
+        ) : null}
+
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
           <Card className="border-border/70 bg-card lg:col-span-2">
             <CardHeader className="pb-3">
@@ -1671,10 +1704,7 @@ export function ProofSpendDashboard({
                 </div>
               </div>
               <div className="space-y-2">
-                <Progress
-                  value={spentPct}
-                  className={cn("h-2", overWarn && "[&>div]:bg-amber-500")}
-                />
+                <Progress value={spentPct} className={cn("h-2", overWarn && "[&>div]:bg-amber-500")} />
                 <div className="flex justify-between text-[11px] font-mono text-muted-foreground">
                   <span>{spentPct.toFixed(1)}% used</span>
                   <span>${Math.max(0, budgetCapUsd - spentUsd).toFixed(4)} remaining</span>
@@ -1682,15 +1712,15 @@ export function ProofSpendDashboard({
               </div>
               <Separator />
               <div className="grid grid-cols-3 gap-3 text-center">
-                {(Object.keys(AGENT_META) as AgentKey[]).map((k) => {
-                  const meta = AGENT_META[k];
-                  const rows = evidenceRows.filter((r) => r.agent === k);
-                  const cost = rows.reduce((s, r) => s + r.cost, 0);
+                {(Object.keys(AGENT_META) as AgentKey[]).map((agent) => {
+                  const rows = evidenceRows.filter((row) => row.agent === agent);
+                  const cost = rows.reduce((sum, row) => sum + row.cost, 0);
+
                   return (
-                    <div key={k} className="rounded-md border border-border/70 bg-secondary/30 p-2">
+                    <div key={agent} className="rounded-md border border-border/70 bg-secondary/30 p-2">
                       <div className="flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
-                        <span className="h-1.5 w-1.5 rounded-full" style={{ background: meta.color }} />
-                        {meta.label}
+                        <span className={cn("h-1.5 w-1.5 rounded-full", AGENT_META[agent].color)} />
+                        {AGENT_META[agent].label}
                       </div>
                       <div className="mt-1 font-mono text-sm text-foreground">${cost.toFixed(4)}</div>
                     </div>
@@ -1703,7 +1733,6 @@ export function ProofSpendDashboard({
           <LiveTimeline events={timelineEvents} />
         </div>
 
-        {/* MEMO */}
         {isRunning ? (
           <MemoSkeleton />
         ) : memo ? (
@@ -1713,7 +1742,9 @@ export function ProofSpendDashboard({
                 <CardTitle className="text-sm font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                   Diligence memo
                 </CardTitle>
-                <p className="text-[11px] text-muted-foreground">Click a claim to jump to evidence ↓</p>
+                <p className="text-[11px] text-muted-foreground">
+                  Click a receipt chip to jump to the linked evidence record.
+                </p>
               </div>
               {runIdLabel ? (
                 <div className="text-[11px] font-mono text-muted-foreground">{runIdLabel}</div>
@@ -1723,12 +1754,17 @@ export function ProofSpendDashboard({
               <VerdictBlock verdict={memo.verdict} confidence={memo.confidence} />
               <Separator />
               <section>
-                <h3 className="font-serif-display mb-3 text-xl font-medium tracking-tight text-foreground">
+                <h3 className="mb-3 font-serif-display text-xl font-medium tracking-tight text-foreground">
                   Rationale
                 </h3>
                 <p className="max-w-prose text-[15px] leading-relaxed text-foreground/85">
-                  {memo.rationale}
+                  {memo.rationale.text}
                 </p>
+                <ClaimCitations
+                  claim={memo.rationale}
+                  selectedRecordId={selectedRecordId}
+                  onSelect={handleSelectClaim}
+                />
               </section>
               <Separator />
               <div className="grid grid-cols-1 gap-x-10 gap-y-8 md:grid-cols-2">
@@ -1740,20 +1776,37 @@ export function ProofSpendDashboard({
               </div>
               <Separator />
               <p className="text-center text-xs italic leading-relaxed text-muted-foreground">
-                Receipt proves payment occurred; claims cite search evidence.
+                Receipt proves payment occurred; the memo cites the records that informed each claim.
               </p>
             </CardContent>
           </Card>
         ) : null}
 
-        {/* SAFESPEND PANEL */}
-        <SafeSpendPanel events={safeSpendRows} />
+        <SafeSpendPanel events={safeSpendRows} hasCompletedRun={hasCompletedRun} />
 
-        {/* RUN HISTORY → EXPORT → EVIDENCE TABLE (mobile stack order) */}
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+          <div className="xl:col-span-2">
+            <ScheduleConsole
+              schedules={schedules}
+              onCreateSchedule={onCreateSchedule}
+              onDeleteSchedule={onDeleteSchedule}
+              onToggleSchedule={onToggleSchedule}
+              onRunScheduleNow={onRunScheduleNow}
+            />
+          </div>
+          <WebhookConsole
+            deliveries={health?.recentWebhookDeliveries ?? []}
+            onRetryWebhook={onRetryWebhook}
+          />
+        </div>
+
+        <ObservabilityConsole events={observabilityEvents} />
+
         <RunHistory
           rows={historyRows}
           selectedRunId={selectedRunId}
-          onReload={(r) => onSelectHistory(r.id)}
+          onReload={(row) => onSelectHistory(row.id)}
+          onClearHistory={onClearHistory}
         />
 
         <VendorCompare
@@ -1765,17 +1818,19 @@ export function ProofSpendDashboard({
           historyCount={historyRows.length}
         />
 
-        {completed && !isRunning && (
+        {showExport && !isRunning ? (
           <ProofPacketExport
-            onExport={(fmt) => (fmt === "json" ? onExportJson() : onExportMarkdown())}
+            onExportJson={onExportJson}
+            onExportMarkdown={onExportMarkdown}
             onShareLink={onShareLink}
             recordCount={evidenceRows.length}
             spentUsd={spentUsd}
           />
-        )}
+        ) : null}
 
-        {/* EVIDENCE RECORDS */}
-        {isRunning ? <LedgerSkeleton /> : (
+        {isRunning ? (
+          <LedgerSkeleton />
+        ) : (
           <EvidenceLedger
             rows={evidenceRows}
             selectedRecordId={selectedRecordId}
@@ -1785,12 +1840,11 @@ export function ProofSpendDashboard({
 
         <ApiIntegrations />
 
-        <footer className="pt-4 pb-24 text-center text-[11px] text-muted-foreground md:pb-2">
-          ProofSpend · x402 micropayments on Base · every claim has a receipt
+        <footer className="pb-24 pt-4 text-center text-[11px] text-muted-foreground md:pb-2">
+          ProofSpend | x402 micropayments on Base | every claim has a receipt
         </footer>
       </div>
 
-      {/* Mobile sticky run bar */}
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-card/80 md:hidden">
         <Button
           onClick={onRun}
@@ -1801,7 +1855,7 @@ export function ProofSpendDashboard({
           {isRunning ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Dispatching agents…
+              Dispatching agents...
             </>
           ) : (
             "Run diligence"

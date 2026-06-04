@@ -87,12 +87,13 @@ const baseRun: DiligenceRun = {
 };
 
 describe("proof packet export", () => {
-  it("wraps a completed run in export metadata", () => {
-    const packet = buildProofPacketJson(baseRun);
+  it("wraps a completed run in export metadata", async () => {
+    const packet = await buildProofPacketJson(baseRun);
     const parsed = JSON.parse(JSON.stringify(packet));
 
     expect(packet.metadata.appName).toBe("ProofSpend");
-    expect(packet.metadata.exportFormatVersion).toBe(1);
+    expect(packet.metadata.exportFormatVersion).toBe(2);
+    expect(packet.metadata.attestation.digest).toBeTruthy();
     expect(parsed.run.records[0].receipt).toBe("0x123abc");
   });
 
@@ -102,17 +103,18 @@ describe("proof packet export", () => {
     );
   });
 
-  it("renders live markdown with traceability and receipt links", () => {
-    const markdown = buildProofPacketMarkdown(baseRun);
+  it("renders live markdown with traceability and receipt links", async () => {
+    const markdown = await buildProofPacketMarkdown(baseRun);
 
     expect(markdown).toContain("# ProofSpend Proof Packet");
     expect(markdown).toContain("Question: Should I spend $500 per month on Apollo.io");
+    expect(markdown).toContain("## Verification");
     expect(markdown).toContain("Trace: record ids: record_market | sources: https://www.apollo.io/pricing");
     expect(markdown).toContain("[0x123abc](https://basescan.org/tx/0x123abc)");
     expect(markdown).toContain("## SafeSpend Log");
   });
 
-  it("labels mock receipts as simulated in markdown", () => {
+  it("labels mock receipts as simulated in markdown", async () => {
     const mockRun: DiligenceRun = {
       ...baseRun,
       paymentMode: "mock",
@@ -126,7 +128,7 @@ describe("proof packet export", () => {
       ],
     };
 
-    const markdown = buildProofPacketMarkdown(mockRun);
+    const markdown = await buildProofPacketMarkdown(mockRun);
 
     expect(markdown).toContain("simulated receipt (mock:0xabc)");
   });

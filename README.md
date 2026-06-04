@@ -117,6 +117,10 @@ Most important values:
 - `LLM_PROVIDER`
 - `POLICY_PROFILE`
 - `DEFAULT_PAID_CALL_COST_USD`
+- `PROOFSPEND_API_KEY`
+- `PROOFSPEND_SIGNING_SECRET`
+- `WEBHOOK_SECRET`
+- `WEBHOOK_MAX_ATTEMPTS`
 - `NVIDIA_API_KEY`
 - `OPENAI_API_KEY`
 - `HF_TOKEN`
@@ -133,6 +137,7 @@ Most important values:
 | `npm run smoke:llm` | Check the active LLM provider setup |
 | `npm run smoke:search` | Exercise one live paid search path |
 | `npm run probe:awal` | Inspect raw live awal payment headers for receipt debugging |
+| `npm run test:e2e` | Run Playwright smoke tests after installing `@playwright/test` locally |
 
 ## SafeSpend guardrails
 
@@ -164,10 +169,96 @@ Notes:
 - response is `text/event-stream`
 - `policyProfile` supports `standard` and `strict`
 - `callbackUrl` is optional and receives the final `DiligenceRun` JSON as a best-effort POST after completion
+- add `?stream=false` or body `"stream": false` to receive the final `DiligenceRun` JSON directly instead of SSE
+- when `WEBHOOK_SECRET` is set, callback deliveries include `X-ProofSpend-Timestamp` and `X-ProofSpend-Signature`
+- when `PROOFSPEND_API_KEY` is set, callers must send `Authorization: Bearer <key>`
 
 ### `GET /api/health`
 
-Returns a small JSON health payload with the active payment mode, policy profile, and configured LLM provider.
+Returns a small JSON health payload with the active payment mode, policy profile, and configured LLM provider. This route stays open even when `PROOFSPEND_API_KEY` is configured so the local dashboard status strip can still load without extra client auth wiring.
+
+The payload also includes lightweight operational diagnostics:
+- process uptime
+- current in-memory rate-limit settings
+- recent webhook delivery outcomes
+
+### `GET /api/openapi`
+
+Returns the current OpenAPI JSON document for the ProofSpend API.
+
+### `POST /api/mcp`
+
+ProofSpend also exposes a lightweight MCP-style JSON-RPC endpoint for agent integrations. Supported methods include:
+
+- `initialize`
+- `ping`
+- `tools/list`
+- `tools/call`
+- `resources/list`
+- `resources/read`
+
+Current MCP tools:
+
+- `proofspend.run_diligence`
+- `proofspend.verify_proof`
+- `proofspend.get_health`
+- `proofspend.get_openapi`
+
+Current MCP resources:
+
+- `proofspend://health`
+- `proofspend://openapi`
+- `proofspend://runs/recent`
+
+When `PROOFSPEND_API_KEY` is configured, MCP `tools/call` and `resources/read` requests must send the same `Authorization: Bearer <key>` header as the HTTP API.
+
+### `POST /api/sign-snapshot`
+
+Accepts a completed `DiligenceRun` and returns an encoded snapshot plus its attestation. When `PROOFSPEND_SIGNING_SECRET` is configured, the attestation is server-signed with HMAC-SHA256; otherwise it falls back to a digest-only attestation.
+
+### `POST /api/verify-proof`
+
+Accepts either a `snapshot` string, a `proofPacket` JSON object, or a `run` plus `attestation`, then returns a verification result showing whether the digest and optional signature still match.
+
+## Platform hardening notes
+
+- `POST /api/run-diligence`, `POST /api/sign-snapshot`, and `POST /api/verify-proof` are protected by simple in-memory rate limits.
+- completed runs can now carry `webhookDelivery` metadata when a callback was attempted
+- the dashboard surfaces recent webhook outcomes in local history and health diagnostics
+
+### Scheduling and observability
+
+- `GET /api/schedules` and `POST /api/schedules` manage in-memory recurring diligence templates
+- `PATCH` / `DELETE /api/schedules/:id` update or remove a schedule
+- `POST /api/schedules/:id/run` dispatches a saved schedule immediately
+- `POST /api/webhooks/retry` retries a recent webhook delivery by `deliveryId`
+- `GET /api/observability` returns recent run, webhook, schedule, verify, and MCP events
+
+### Playwright smoke scaffold
+
+This repo now includes a Playwright-ready smoke scaffold:
+
+- `playwright.config.mjs`
+- `e2e/proofspend.smoke.spec.mjs`
+
+Install `@playwright/test` in your local environment before running:
+
+```bash
+npm run test:e2e
+```
+
+If you are running in WSL and `npx playwright install` warns that the host is missing browser dependencies, install the Linux packages first:
+
+```bash
+sudo npx playwright install-deps
+npx playwright install
+```
+
+Then rerun:
+
+```bash
+npm run test:e2e
+```
 
 ## Demo flow
 
@@ -182,43 +273,53 @@ Returns a small JSON health payload with the active payment mode, policy profile
 
 ```text
 app/
+  api/health/route.ts
+  api/mcp/route.ts
+  api/observability/route.ts
+  api/openapi/route.ts
   api/run-diligence/route.ts
+  api/schedules/route.ts
+  api/sign-snapshot/route.ts
+  api/verify-proof/route.ts
+  api/webhooks/retry/route.ts
   layout.tsx
   page.tsx
 components/
-  AgentTimeline.tsx
-  EvidenceTable.tsx
-  CompareWorkspace.tsx
-  ExportProofPacket.tsx
-  ApiGuide.tsx
-  MemoView.tsx
-  MockWatermark.tsx
-  ModeBadge.tsx
-  RunHistory.tsx
-  SafeSpendPanel.tsx
   RunForm.tsx
-  SpendTracker.tsx
+  proofspend/Dashboard.tsx
+  ui/*
 lib/
   agents/
   llm/
   mock/
+  api-auth.ts
   config.ts
+  health.ts
+  observability.ts
+  openapi.ts
   orchestrator.ts
   proof-packet.ts
+  rate-limit.ts
+  recent-runs.ts
   run-sharing.ts
+  run-service.ts
   safespend.ts
+  schedules.ts
   sse.ts
   subject.ts
+  trust.ts
   types.ts
+  webhooks.ts
   x402-search.ts
 scripts/
   check-prerequisites.mjs
   probe-awal.mjs
   smoke-llm.mjs
   smoke-search.mjs
+e2e/
+  proofspend.smoke.spec.mjs
 test/
-  proof-packet.test.ts
-  safespend.test.ts
+  *.test.ts
 ```
 
 ## Publishing checklist
@@ -231,7 +332,11 @@ Before pushing this repo to GitHub:
 4. Make sure `.env` is not committed
 5. Keep live wallet credentials only on your local machine
 
+For the fuller release-prep flow, use [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md).
+
 ## More docs
 
 - [SETUP.md](./SETUP.md)
 - [REQUIREMENTS.md](./REQUIREMENTS.md)
+- [DEMO.md](./DEMO.md)
+- [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)

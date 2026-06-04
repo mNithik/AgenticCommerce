@@ -18,6 +18,47 @@ function cleanJson(value: string) {
   return value.replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
 }
 
+function normalizeWhitespace(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function stripSummaryLeadIn(value: string) {
+  return value
+    .replace(/^here(?:'s| is)\s+(?:a\s+)?concise\s+evidence\s+summary(?::)?\s*/i, "")
+    .replace(/^based on the provided sources[:,]?\s*/i, "")
+    .replace(/^in summary[:,]?\s*/i, "")
+    .replace(/^overall[:,]?\s*/i, "")
+    .trim();
+}
+
+function firstSentences(value: string, maxSentences = 2) {
+  const sentences = stripSummaryLeadIn(normalizeWhitespace(value))
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+
+  return sentences.slice(0, maxSentences).join(" ").trim();
+}
+
+function clampTextLength(value: string, maxLength = 240) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  const sliced = value.slice(0, maxLength - 1);
+  const safe = sliced.slice(0, Math.max(sliced.lastIndexOf("."), sliced.lastIndexOf(","), sliced.lastIndexOf(" ")));
+  return `${(safe || sliced).trim()}…`;
+}
+
+function toClaimText(value: string, fallback: string) {
+  const compact = firstSentences(value, 2);
+  if (!compact) {
+    return fallback;
+  }
+
+  return clampTextLength(compact);
+}
+
 function extractJsonBlock(value: string) {
   const cleaned = cleanJson(value);
   const starts = [cleaned.indexOf("["), cleaned.indexOf("{")].filter((index) => index >= 0);
@@ -84,7 +125,7 @@ function sanitizeClaimWithFallback(
 
   return {
     id: resolved?.id || makeId("claim", fallbackText),
-    claimText: resolved?.claimText || fallbackText,
+    claimText: toClaimText(resolved?.claimText || fallbackText, fallbackText),
     recordIds: unique(resolved?.recordIds ?? fallbackClaim?.recordIds ?? []).filter(Boolean),
     sourceUrls: unique(resolved?.sourceUrls ?? fallbackClaim?.sourceUrls ?? []).filter(Boolean),
   };
@@ -157,7 +198,7 @@ function buildFallbackClaimFromRecord(
 
   return {
     id: makeId("claim", `${record.id}_${label}`),
-    claimText: record.finding,
+    claimText: toClaimText(record.finding, "Evidence is limited."),
     recordIds: [record.id],
     sourceUrls: unique(record.sources.slice(0, 2).map((source) => source.url)),
   };
@@ -264,7 +305,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       )
       .join("\n\n");
 
-    return this.complete(this.summaryModel, [
+    const output = await this.complete(this.summaryModel, [
       {
         role: "system",
         content:
@@ -276,6 +317,13 @@ export class OpenAICompatibleProvider implements LLMProvider {
           `Agent: ${input.agent}\nSubject: ${input.subject}\nQuery: ${input.query}\n\nSources:\n${sources}`,
       },
     ]);
+
+    return toClaimText(
+      output,
+      input.agent === "Counter" || input.agent === "Skeptic"
+        ? `Risk signals are present for ${input.subject}, but the evidence is limited.`
+        : `The available evidence on ${input.subject} is mixed and needs validation.`,
+    );
   }
 
   async scoreConfidence(text: string) {
@@ -346,7 +394,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       {
         role: "system",
         content:
-          "You are a venture diligence analyst. Return only valid JSON with keys recommendation, confidence, rationale, strengths, concerns, nextSteps. The rationale must be an object, not a string. Each claim object must include claimText, recordIds, and sourceUrls. Use only the provided record ids and URLs.",
+          "You are a venture diligence analyst. Return only valid JSON with keys recommendation, confidence, rationale, strengths, concerns, nextSteps. The rationale must be an object, not a string. Each claim object must include claimText, recordIds, and sourceUrls. Use only the provided record ids and URLs. Every claimText must be concise, concrete, and decision-oriented: one or two sentences max, no numbered lists, no preambles like 'here is a concise summary', and no source-by-source recitation.",
       },
       {
         role: "user",
@@ -366,7 +414,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     const catalog = sourceCatalog(input);
     const fallbackRationaleText =
       typeof parsed.rationale === "string"
-        ? parsed.rationale
+        ? toClaimText(parsed.rationale, "Rationale unavailable.")
         : parsed.strengths?.[0]?.claimText ||
           parsed.concerns?.[0]?.claimText ||
           "Rationale unavailable.";

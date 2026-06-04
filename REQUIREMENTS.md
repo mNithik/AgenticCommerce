@@ -29,9 +29,18 @@ Declared in [`package.json`](./package.json):
 
 - `typescript`
 - `vitest`
+- `@playwright/test` for optional browser smoke tests
 - `@types/node`
 - `@types/react`
 - `@types/react-dom`
+
+### Optional Linux / WSL browser dependencies
+
+If you run Playwright inside WSL or Linux, the browser binaries may also require host packages installed through:
+
+```bash
+sudo npx playwright install-deps
+```
 
 ## Environment requirements
 
