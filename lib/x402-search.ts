@@ -143,7 +143,7 @@ function findFirstNumber(
   return undefined;
 }
 
-function parseAwalJson(raw: string) {
+export function parseAwalJson(raw: string) {
   const root = JSON.parse(raw) as Record<string, unknown>;
   const bodyCandidates = [
     root.body,

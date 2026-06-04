@@ -12,6 +12,9 @@ ProofSpend is a Next.js MVP for receipt-backed autonomous diligence. A user subm
 - exports completed runs as proof packets in JSON or Markdown
 - stores the last 10 completed runs locally for quick reopen
 - lets you click memo claims to trace them back to evidence rows and receipts
+- creates shareable snapshot links for completed runs
+- compares two vendor diligence runs side by side
+- includes an in-app API guide for agent and webhook integrations
 
 ## Modes
 
@@ -173,6 +176,7 @@ Returns a small JSON health payload with the active payment mode, policy profile
 3. Run the Apollo.io example question.
 4. Click a memo claim to trace it to the evidence row and receipt.
 5. Export the proof packet in Markdown or JSON.
+6. Copy a share link or compare the run against another saved vendor.
 
 ## Project structure
 
@@ -184,7 +188,9 @@ app/
 components/
   AgentTimeline.tsx
   EvidenceTable.tsx
+  CompareWorkspace.tsx
   ExportProofPacket.tsx
+  ApiGuide.tsx
   MemoView.tsx
   MockWatermark.tsx
   ModeBadge.tsx
@@ -198,6 +204,8 @@ lib/
   mock/
   config.ts
   orchestrator.ts
+  proof-packet.ts
+  run-sharing.ts
   safespend.ts
   sse.ts
   subject.ts

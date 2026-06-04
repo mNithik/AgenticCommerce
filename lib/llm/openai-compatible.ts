@@ -3,7 +3,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { deterministicProvider } from "./deterministic";
 import type { AnalystOutput, LLMProviderName } from "../types";
 import type { AnalystInput, LLMProvider, SummaryInput } from "./provider";
-import { clamp, makeId, unique } from "../utils";
+import { clamp, makeId, unique } from "../text-utils";
 import type { AgentName, MemoClaim, Recommendation } from "../types";
 
 type Options = {
@@ -18,13 +18,17 @@ function cleanJson(value: string) {
   return value.replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
 }
 
-function extractJsonObject(value: string) {
+function extractJsonBlock(value: string) {
   const cleaned = cleanJson(value);
-  const firstBrace = cleaned.indexOf("{");
-  const lastBrace = cleaned.lastIndexOf("}");
+  const starts = [cleaned.indexOf("["), cleaned.indexOf("{")].filter((index) => index >= 0);
+  if (starts.length === 0) {
+    return cleaned;
+  }
 
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    return cleaned.slice(firstBrace, lastBrace + 1);
+  const start = Math.min(...starts);
+  const end = Math.max(cleaned.lastIndexOf("]"), cleaned.lastIndexOf("}"));
+  if (end > start) {
+    return cleaned.slice(start, end + 1);
   }
 
   return cleaned;
@@ -207,13 +211,33 @@ export class OpenAICompatibleProvider implements LLMProvider {
       throw new Error(`${this.name} is not configured.`);
     }
 
-    const result = await this.client.chat.completions.create({
-      model,
-      temperature: 0.2,
-      messages,
-    });
+    const maxAttempts = 5;
+    let lastError: unknown;
 
-    return result.choices[0]?.message?.content?.trim() ?? "";
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const result = await this.client.chat.completions.create({
+          model,
+          temperature: 0.2,
+          messages,
+        });
+
+        return result.choices[0]?.message?.content?.trim() ?? "";
+      } catch (error) {
+        lastError = error;
+        const status = (error as { status?: number }).status;
+        const retryable = status === 429 || (typeof status === "number" && status >= 500);
+
+        if (retryable && attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 700 * 2 ** (attempt - 1)));
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    throw lastError;
   }
 
   async extractSubject(question: string) {
@@ -334,7 +358,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     let parsed: Partial<AnalystOutput>;
 
     try {
-      parsed = JSON.parse(extractJsonObject(output)) as AnalystOutput;
+      parsed = JSON.parse(extractJsonBlock(output)) as AnalystOutput;
     } catch {
       parsed = {};
     }

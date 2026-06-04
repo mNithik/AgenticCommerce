@@ -1,5 +1,5 @@
 import type { AgentName, PaymentMode, SearchSource } from "../types";
-import { hashText, slugify } from "../utils";
+import { hashText, slugify } from "../text-utils";
 
 type MockSearchResult = {
   sources: SearchSource[];

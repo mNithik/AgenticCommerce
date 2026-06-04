@@ -9,7 +9,7 @@ import { getLLMProvider } from "./llm";
 import { SafeSpend } from "./safespend";
 import { extractSubject } from "./subject";
 import type { DiligenceRun, EvidenceRecord, PolicyProfile, RunEvent } from "./types";
-import { makeId, normalizeQuery } from "./utils";
+import { makeId, normalizeQuery } from "./text-utils";
 import { estimatePaidSearchCostUsd, paidSearch } from "./x402-search";
 
 type RunOptions = {
@@ -62,71 +62,81 @@ async function runAgent(params: {
     return undefined;
   }
 
-  const payment = await paidSearch({
-    agent: params.definition.name,
-    query,
-    runId: params.runId,
-    callIndex: params.state.paidCalls + 1,
-    subject: params.subject,
-  });
-
-  const receiptCheck = params.safeSpend.recordReceipt(
-    params.definition.name,
-    payment.receipt,
-  );
-
-  if (receiptCheck.status === "blocked") {
-    params.emit({
-      type: "policy_blocked",
+  try {
+    const payment = await paidSearch({
       agent: params.definition.name,
-      reason: receiptCheck.reason,
-      spentUsd: params.state.spentUsd,
+      query,
+      runId: params.runId,
+      callIndex: params.state.paidCalls + 1,
+      subject: params.subject,
     });
-    throw new Error(`Duplicate receipt detected for ${params.definition.name}.`);
+
+    const receiptCheck = params.safeSpend.recordReceipt(
+      params.definition.name,
+      payment.receipt,
+    );
+
+    if (receiptCheck.status === "blocked") {
+      params.emit({
+        type: "policy_blocked",
+        agent: params.definition.name,
+        reason: receiptCheck.reason,
+        spentUsd: params.state.spentUsd,
+      });
+      return undefined;
+    }
+
+    params.emit({
+      type: "payment_settled",
+      agent: params.definition.name,
+      receipt: payment.receipt,
+      costUsd: payment.costUsd,
+      paymentMode: payment.paymentMode,
+    });
+
+    const finding = await params.provider.summarizeFinding({
+      agent: params.definition.name,
+      subject: params.subject,
+      query,
+      sources: payment.sources,
+    });
+
+    const record: EvidenceRecord = {
+      id: makeId("rec", `${params.runId}_${params.definition.name}_${query}`),
+      agent: params.definition.name,
+      query,
+      normalizedQuery: normalizeQuery(query),
+      provider: payment.provider,
+      paymentMode: payment.paymentMode,
+      costUsd: payment.costUsd,
+      receipt: payment.receipt,
+      finding,
+      sources: payment.sources,
+      policyStatus: "allowed",
+    };
+
+    params.state.records.push(record);
+    params.state.spentUsd += payment.costUsd;
+    params.state.paidCalls += 1;
+
+    params.emit({
+      type: "agent_completed",
+      agent: params.definition.name,
+      record,
+      spentUsd: params.state.spentUsd,
+      paidCalls: params.state.paidCalls,
+    });
+
+    return record;
+  } catch (error) {
+    params.emit({
+      type: "search_failed",
+      agent: params.definition.name,
+      query,
+      reason: error instanceof Error ? error.message : "Unknown search failure.",
+    });
+    return undefined;
   }
-
-  params.emit({
-    type: "payment_settled",
-    agent: params.definition.name,
-    receipt: payment.receipt,
-    costUsd: payment.costUsd,
-    paymentMode: payment.paymentMode,
-  });
-
-  const finding = await params.provider.summarizeFinding({
-    agent: params.definition.name,
-    subject: params.subject,
-    query,
-    sources: payment.sources,
-  });
-
-  const record: EvidenceRecord = {
-    id: makeId("rec", `${params.runId}_${params.definition.name}_${query}`),
-    agent: params.definition.name,
-    query,
-    normalizedQuery: normalizeQuery(query),
-    provider: payment.provider,
-    paymentMode: payment.paymentMode,
-    costUsd: payment.costUsd,
-    receipt: payment.receipt,
-    finding,
-    sources: payment.sources,
-    policyStatus: "allowed",
-  };
-
-  params.state.records.push(record);
-  params.state.spentUsd += payment.costUsd;
-  params.state.paidCalls += 1;
-
-  params.emit({
-    type: "agent_completed",
-    agent: params.definition.name,
-    record,
-    spentUsd: params.state.spentUsd,
-    paidCalls: params.state.paidCalls,
-  });
-
-  return record;
 }
 
 export async function runDiligence({
@@ -199,6 +209,12 @@ export async function runDiligence({
     }
   }
 
+  if (state.records.length === 0) {
+    throw new Error(
+      "No evidence could be gathered because every paid search failed or was blocked.",
+    );
+  }
+
   const marketFinding = primaryResults.Market?.finding ?? "";
   const evidenceFinding = primaryResults.Evidence?.finding ?? "";
   const counterFinding = primaryResults.Counter?.finding ?? "";
@@ -207,6 +223,8 @@ export async function runDiligence({
   const evidenceConfidence = await provider.scoreConfidence(evidenceFinding);
   const counterSeverity = await provider.scoreNegativity(counterFinding);
   const shouldRunSkeptic =
+    Boolean(primaryResults.Market) &&
+    Boolean(primaryResults.Evidence) &&
     marketConfidence + evidenceConfidence >= 1.3 &&
     counterSeverity < 0.5 &&
     state.spentUsd + projectedCostUsd <= budgetCapUsd;
@@ -234,9 +252,10 @@ export async function runDiligence({
   });
 
   const finalRecommendation =
-    policyProfile === "strict" &&
-    analystOutput.recommendation === "buy" &&
-    (analystOutput.confidence < 0.8 || state.records.some((record) => record.agent === "Counter"))
+    (policyProfile === "strict" &&
+      analystOutput.recommendation === "buy" &&
+      (analystOutput.confidence < 0.8 || state.records.some((record) => record.agent === "Counter"))) ||
+    (state.records.length < 2 && analystOutput.recommendation === "buy")
       ? "need_more_evidence"
       : analystOutput.recommendation;
   const finalAnalystOutput =

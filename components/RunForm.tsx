@@ -1,18 +1,41 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AgentTimeline } from "./AgentTimeline";
-import { EvidenceTable } from "./EvidenceTable";
-import { ExportProofPacket } from "./ExportProofPacket";
-import { MemoView } from "./MemoView";
-import { MockWatermark } from "./MockWatermark";
-import { ModeBadge } from "./ModeBadge";
-import { RunHistory } from "./RunHistory";
-import { SafeSpendPanel } from "./SafeSpendPanel";
-import { SpendTracker } from "./SpendTracker";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+import { ProofSpendDashboard } from "./proofspend/Dashboard";
+import {
+  analystToMemoView,
+  paymentModeToUi,
+  runEventsToTimeline,
+  runToCompareVendor,
+  runToEvidenceRows,
+  runToHistoryRow,
+  safeSpendToRows,
+} from "../lib/dashboard-adapters";
+import {
+  buildProofPacketFilename,
+  buildProofPacketJson,
+  buildProofPacketMarkdown,
+} from "../lib/proof-packet";
+import { deserializeRunSnapshot, serializeRunSnapshot } from "../lib/run-sharing";
 import type { DiligenceRun, PolicyProfile, RunEvent } from "../lib/types";
 
 const HISTORY_KEY = "proofspend.runHistory.v1";
+
+const EXAMPLE_QUESTIONS = [
+  {
+    short: "Apollo.io lead gen",
+    full: "Should I spend $500 per month on Apollo.io for B2B lead generation for my early-stage SaaS startup?",
+  },
+  {
+    short: "HubSpot Enterprise",
+    full: "Should I buy HubSpot Enterprise for our 20-person sales team?",
+  },
+  {
+    short: "LeadMagic",
+    full: "Should we switch to LeadMagic for AI-powered lead enrichment at $99/seat?",
+  },
+];
 
 async function consumeSSE(
   response: Response,
@@ -50,16 +73,27 @@ async function consumeSSE(
   }
 }
 
+function downloadFile(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export function RunForm() {
-  const [question, setQuestion] = useState("Should I spend $500 per month on Apollo.io for B2B lead generation for my early-stage SaaS startup?");
+  const [question, setQuestion] = useState(EXAMPLE_QUESTIONS[0].full);
   const [budgetCapUsd, setBudgetCapUsd] = useState(0.25);
   const [policyProfile, setPolicyProfile] = useState<PolicyProfile>("standard");
   const [isRunning, setIsRunning] = useState(false);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [run, setRun] = useState<DiligenceRun | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeRecordIds, setActiveRecordIds] = useState<string[]>([]);
+  const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
   const [history, setHistory] = useState<DiligenceRun[]>([]);
+  const [compareRunId, setCompareRunId] = useState("");
 
   const spentUsd =
     run?.spentUsd ??
@@ -69,9 +103,10 @@ export function RunForm() {
   const paidCalls =
     run?.paidCalls ??
     events.filter((event) => event.type === "payment_settled").length;
-  const mode =
+  const mode = paymentModeToUi(
     run?.paymentMode ??
-    (events.find((event) => event.type === "run_started")?.paymentMode ?? null);
+      (events.find((event) => event.type === "run_started")?.paymentMode ?? null),
+  );
 
   useEffect(() => {
     try {
@@ -90,13 +125,29 @@ export function RunForm() {
   }, []);
 
   useEffect(() => {
-    if (activeRecordIds.length === 0) {
-      return;
-    }
+    try {
+      const url = new URL(window.location.href);
+      const snapshot = url.searchParams.get("snapshot");
+      if (!snapshot) {
+        return;
+      }
 
-    const target = document.getElementById(`record-${activeRecordIds[0]}`);
-    target?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [activeRecordIds]);
+      const restoredRun = deserializeRunSnapshot(snapshot);
+      if (!restoredRun) {
+        return;
+      }
+
+      setRun(restoredRun);
+      setQuestion(restoredRun.input);
+      setBudgetCapUsd(restoredRun.budgetCapUsd);
+      setPolicyProfile(restoredRun.policyProfile);
+      saveRunToHistory(restoredRun);
+      url.searchParams.delete("snapshot");
+      window.history.replaceState({}, "", url.toString());
+    } catch {
+      // Ignore malformed snapshot links and keep the local app usable.
+    }
+  }, []);
 
   function saveRunToHistory(completedRun: DiligenceRun) {
     setHistory((current) => {
@@ -105,17 +156,45 @@ export function RunForm() {
         ...current.filter((item) => item.id !== completedRun.id),
       ].slice(0, 10);
       window.localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      if (!compareRunId) {
+        const defaultCompare = next.find((item) => item.id !== completedRun.id)?.id ?? "";
+        setCompareRunId(defaultCompare);
+      }
       return next;
     });
   }
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function loadHistoryRun(runId: string) {
+    const selectedRun = history.find((item) => item.id === runId);
+    if (!selectedRun) {
+      return;
+    }
+
+    setRun(selectedRun);
+    setEvents([]);
+    setError(null);
+    setSelectedRecordId(null);
+    setQuestion(selectedRun.input);
+    setBudgetCapUsd(selectedRun.budgetCapUsd);
+    setPolicyProfile(selectedRun.policyProfile);
+    setCompareRunId(history.find((item) => item.id !== selectedRun.id)?.id ?? "");
+  }
+
+  async function handleRun() {
+    setError(null);
+    if (!question.trim()) {
+      setError("Enter a diligence question first.");
+      return;
+    }
+    if (budgetCapUsd <= 0) {
+      setError("Budget cap must be greater than $0.");
+      return;
+    }
+
     setIsRunning(true);
     setEvents([]);
     setRun(null);
-    setError(null);
-    setActiveRecordIds([]);
+    setSelectedRecordId(null);
 
     try {
       const response = await fetch("/api/run-diligence", {
@@ -157,159 +236,86 @@ export function RunForm() {
     }
   }
 
+  const historyRows = useMemo(() => history.map(runToHistoryRow), [history]);
+  const compareCandidates = useMemo(
+    () => (run ? history.filter((item) => item.id !== run.id) : []),
+    [history, run],
+  );
+  const compareRun =
+    compareCandidates.find((item) => item.id === compareRunId) ??
+    compareCandidates[0] ??
+    null;
+  const compareOptions = compareCandidates.map((candidate) => ({
+    id: candidate.id,
+    label: `${candidate.subject} | ${candidate.recommendation.replaceAll("_", " ")} | $${candidate.spentUsd.toFixed(2)}`,
+  }));
+
+  async function handleShareLink() {
+    if (!run) {
+      return;
+    }
+
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("snapshot", serializeRunSnapshot(run));
+      await navigator.clipboard.writeText(url.toString());
+      toast.success("Share link copied");
+    } catch {
+      toast.error("Could not copy the share link on this device");
+    }
+  }
+
   return (
-    <div
-      style={{
-        width: "min(1180px, calc(100vw - 32px))",
-        margin: "0 auto",
-        padding: "28px 0 56px",
+    <ProofSpendDashboard
+      question={question}
+      onQuestionChange={setQuestion}
+      budgetCapUsd={budgetCapUsd}
+      onBudgetChange={setBudgetCapUsd}
+      policyProfile={policyProfile}
+      onPolicyChange={setPolicyProfile}
+      isRunning={isRunning}
+      onRun={() => void handleRun()}
+      error={error}
+      mode={mode}
+      spentUsd={spentUsd}
+      paidCalls={paidCalls}
+      timelineEvents={runEventsToTimeline(events)}
+      evidenceRows={runToEvidenceRows(run)}
+      memo={analystToMemoView(run?.analystOutput)}
+      safeSpendRows={safeSpendToRows(run?.safeSpendLog ?? [])}
+      historyRows={historyRows}
+      selectedRunId={run?.id ?? null}
+      onSelectHistory={loadHistoryRun}
+      currentVendor={run ? runToCompareVendor(run) : null}
+      compareVendor={compareRun ? runToCompareVendor(compareRun) : null}
+      compareOptions={compareOptions}
+      compareRunId={compareRun?.id ?? ""}
+      onCompareRunChange={setCompareRunId}
+      selectedRecordId={selectedRecordId}
+      onSelectRecord={setSelectedRecordId}
+      showExport={Boolean(run)}
+      onShareLink={handleShareLink}
+      onExportJson={() => {
+        if (!run) {
+          return;
+        }
+        downloadFile(
+          buildProofPacketFilename(run, "json"),
+          JSON.stringify(buildProofPacketJson(run), null, 2),
+          "application/json",
+        );
       }}
-    >
-      <section
-        style={{
-          background: "var(--paper)",
-          border: "1px solid var(--line)",
-          borderRadius: 32,
-          padding: 28,
-          boxShadow: "var(--shadow)",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 24, flexWrap: "wrap" }}>
-          <div>
-            <div
-              style={{
-                fontSize: 12,
-                color: "var(--muted)",
-                textTransform: "uppercase",
-                letterSpacing: "0.12em",
-              }}
-            >
-              ProofSpend
-            </div>
-            <h1 style={{ margin: "10px 0 12px", fontSize: "clamp(2rem, 5vw, 4rem)", lineHeight: 1 }}>
-              Receipt-backed research for autonomous agents.
-            </h1>
-            <p style={{ margin: 0, maxWidth: 720, color: "var(--muted)", fontSize: 18, lineHeight: 1.5 }}>
-              Run controlled diligence, cap spend before every paid search, and trace each memo claim back to a source and receipt.
-            </p>
-          </div>
-          <ModeBadge mode={mode} />
-        </div>
-
-        <form onSubmit={handleSubmit} style={{ marginTop: 28 }}>
-          <label style={{ display: "block", fontSize: 14, fontWeight: 700, marginBottom: 10 }}>
-            Diligence question
-          </label>
-          <textarea
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            rows={4}
-            style={{
-              width: "100%",
-              borderRadius: 20,
-              border: "1px solid var(--line)",
-              padding: 18,
-              background: "rgba(255,255,255,0.72)",
-              resize: "vertical",
-            }}
-          />
-
-          <div style={{ display: "flex", gap: 16, alignItems: "end", flexWrap: "wrap", marginTop: 18 }}>
-            <label style={{ display: "block" }}>
-              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>Budget cap (USD)</div>
-              <input
-                type="number"
-                step="0.01"
-                min="0.01"
-                value={budgetCapUsd}
-                onChange={(event) => setBudgetCapUsd(Number(event.target.value))}
-                style={{
-                  width: 140,
-                  borderRadius: 14,
-                  border: "1px solid var(--line)",
-                  padding: "12px 14px",
-                  background: "rgba(255,255,255,0.72)",
-                }}
-              />
-            </label>
-            <label style={{ display: "block" }}>
-              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>Policy profile</div>
-              <select
-                value={policyProfile}
-                onChange={(event) => setPolicyProfile(event.target.value as PolicyProfile)}
-                style={{
-                  width: 160,
-                  borderRadius: 14,
-                  border: "1px solid var(--line)",
-                  padding: "12px 14px",
-                  background: "rgba(255,255,255,0.72)",
-                }}
-              >
-                <option value="standard">standard</option>
-                <option value="strict">strict</option>
-              </select>
-            </label>
-
-            <button
-              type="submit"
-              disabled={isRunning}
-              style={{
-                border: "none",
-                borderRadius: 999,
-                padding: "14px 24px",
-                background: "linear-gradient(135deg, var(--accent), #2563eb)",
-                color: "#fff",
-                fontWeight: 700,
-                cursor: isRunning ? "wait" : "pointer",
-              }}
-            >
-              {isRunning ? "Running..." : "Run diligence"}
-            </button>
-          </div>
-
-          {error ? (
-            <div style={{ marginTop: 16, color: "var(--danger)", fontWeight: 700 }}>{error}</div>
-          ) : null}
-        </form>
-      </section>
-
-      <MockWatermark mode={mode} />
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-          gap: 20,
-          marginTop: 20,
-        }}
-      >
-        <SpendTracker spentUsd={spentUsd} budgetCapUsd={budgetCapUsd} paidCalls={paidCalls} />
-        <AgentTimeline events={events} />
-      </div>
-
-      <div style={{ display: "grid", gap: 20, marginTop: 20 }}>
-        <RunHistory
-          runs={history}
-          onSelect={(selectedRun) => {
-            setRun(selectedRun);
-            setEvents([]);
-            setError(null);
-            setActiveRecordIds([]);
-            setQuestion(selectedRun.input);
-            setBudgetCapUsd(selectedRun.budgetCapUsd);
-            setPolicyProfile(selectedRun.policyProfile);
-          }}
-        />
-        <ExportProofPacket run={run} />
-        <MemoView
-          analystOutput={run?.analystOutput ?? null}
-          records={run?.records ?? []}
-          activeRecordIds={activeRecordIds}
-          onClaimSelect={setActiveRecordIds}
-        />
-        <SafeSpendPanel events={run?.safeSpendLog ?? []} />
-        <EvidenceTable records={run?.records ?? []} highlightedRecordIds={activeRecordIds} />
-      </div>
-    </div>
+      onExportMarkdown={() => {
+        if (!run) {
+          return;
+        }
+        downloadFile(
+          buildProofPacketFilename(run, "md"),
+          buildProofPacketMarkdown(run),
+          "text/markdown;charset=utf-8",
+        );
+      }}
+      runIdLabel={run ? `run_id | ${run.id}` : undefined}
+    />
   );
 }

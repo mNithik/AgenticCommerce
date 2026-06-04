@@ -115,6 +115,9 @@ export function buildProofPacketJson(run: DiligenceRun): ProofPacketJson {
 }
 
 export function buildProofPacketMarkdown(run: DiligenceRun) {
+  const sourcesByClaim = (claim: MemoClaim) =>
+    claim.sourceUrls.length > 0 ? claim.sourceUrls.map((url) => `- ${url}`).join("\n") : "- none";
+
   const claimSections = [
     renderClaimList("Strengths", run.analystOutput.strengths),
     renderClaimList("Concerns", run.analystOutput.concerns),
@@ -150,6 +153,7 @@ export function buildProofPacketMarkdown(run: DiligenceRun) {
     `${run.analystOutput.rationale.claimText}`,
     "",
     `Trace: ${claimTrace(run.analystOutput.rationale)}`,
+    `${sourcesByClaim(run.analystOutput.rationale)}`,
     "",
     claimSections,
     "## Evidence Records",
