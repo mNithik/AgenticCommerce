@@ -29,6 +29,9 @@ export const proofSpendOpenApi = {
         properties: {
           question: { type: "string" },
           budgetCapUsd: { type: "number", minimum: 0 },
+          parentRunId: { type: "string" },
+          gapId: { type: "string" },
+          suggestedQuery: { type: "string" },
           policyProfile: {
             type: "string",
             enum: ["standard", "strict"],
@@ -51,6 +54,26 @@ export const proofSpendOpenApi = {
           title: { type: "string" },
           url: { type: "string", format: "uri" },
           snippet: { type: "string" },
+          score: { type: "number" },
+        },
+      },
+      StructuredFindingMeta: {
+        type: "object",
+        required: ["summary", "riskFlags", "positiveSignals"],
+        properties: {
+          summary: { type: "string" },
+          riskFlags: { type: "array", items: { type: "string" } },
+          positiveSignals: { type: "array", items: { type: "string" } },
+          theme: {
+            type: "string",
+            enum: [
+              "legal_resolution",
+              "pricing_validation",
+              "implementation_validation",
+              "deliverability_validation",
+              "general_validation",
+            ],
+          },
         },
       },
       EvidenceRecord: {
@@ -78,6 +101,7 @@ export const proofSpendOpenApi = {
           costUsd: { type: "number" },
           receipt: { type: "string" },
           finding: { type: "string" },
+          findingMeta: { $ref: "#/components/schemas/StructuredFindingMeta" },
           sources: {
             type: "array",
             items: { $ref: "#/components/schemas/SearchSource" },
@@ -125,6 +149,118 @@ export const proofSpendOpenApi = {
           },
         },
       },
+      ConfidenceAgentSignal: {
+        type: "object",
+        required: ["agent", "ran"],
+        properties: {
+          agent: { type: "string", enum: ["Market", "Evidence", "Counter", "Skeptic"] },
+          confidence: { type: "number" },
+          negativity: { type: "number" },
+          ran: { type: "boolean" },
+          recordId: { type: "string" },
+        },
+      },
+      ConfidenceFactor: {
+        type: "object",
+        required: ["id", "label", "impact"],
+        properties: {
+          id: { type: "string" },
+          label: { type: "string" },
+          impact: { type: "number" },
+          recordIds: { type: "array", items: { type: "string" } },
+        },
+      },
+      PolicyAdjustment: {
+        type: "object",
+        required: ["rule", "delta", "reason"],
+        properties: {
+          rule: { type: "string" },
+          delta: { type: "number" },
+          reason: { type: "string" },
+        },
+      },
+      ConfidenceBreakdown: {
+        type: "object",
+        required: ["overall", "agentSignals", "factors", "policyAdjustments"],
+        properties: {
+          overall: { type: "number" },
+          agentSignals: {
+            type: "array",
+            items: { $ref: "#/components/schemas/ConfidenceAgentSignal" },
+          },
+          factors: {
+            type: "array",
+            items: { $ref: "#/components/schemas/ConfidenceFactor" },
+          },
+          policyAdjustments: {
+            type: "array",
+            items: { $ref: "#/components/schemas/PolicyAdjustment" },
+          },
+          effectiveCounterRisk: { type: "number" },
+          confidenceCeiling: { $ref: "#/components/schemas/ConfidenceCeiling" },
+        },
+      },
+      ConfidenceCeiling: {
+        type: "object",
+        required: ["value", "reason"],
+        properties: {
+          value: { type: "number" },
+          reason: { type: "string" },
+          recordIds: { type: "array", items: { type: "string" } },
+        },
+      },
+      DecisionFactor: {
+        type: "object",
+        required: ["id", "label", "impact"],
+        properties: {
+          id: { type: "string" },
+          label: { type: "string" },
+          impact: { type: "string", enum: ["positive", "negative", "blocking"] },
+          recordIds: { type: "array", items: { type: "string" } },
+        },
+      },
+      ProofScoreComponents: {
+        type: "object",
+        required: ["overall", "citationCoverage", "runCompleteness"],
+        properties: {
+          overall: { type: "number" },
+          citationCoverage: { type: "number" },
+          runCompleteness: { type: "number" },
+        },
+      },
+      ConfidenceGap: {
+        type: "object",
+        required: ["id", "title", "estimatedConfidenceGain", "estimatedCostUsd", "actionType"],
+        properties: {
+          id: { type: "string" },
+          title: { type: "string" },
+          estimatedConfidenceGain: { type: "number" },
+          estimatedCostUsd: { type: "number" },
+          suggestedQuery: { type: "string" },
+          focusAgent: {
+            type: "string",
+            enum: ["Market", "Evidence", "Counter", "Skeptic"],
+          },
+          parentRunId: { type: "string" },
+          theme: {
+            type: "string",
+            enum: [
+              "legal_resolution",
+              "pricing_validation",
+              "implementation_validation",
+              "deliverability_validation",
+              "general_validation",
+            ],
+          },
+          priority: { type: "number" },
+          detail: { type: "string" },
+          actionType: {
+            type: "string",
+            enum: ["paid_search", "trial", "internal_data"],
+          },
+          recordIds: { type: "array", items: { type: "string" } },
+        },
+      },
       SafeSpendEvent: {
         type: "object",
         required: ["agent", "action", "status", "reason"],
@@ -151,6 +287,10 @@ export const proofSpendOpenApi = {
           "policyProfile",
           "recommendation",
           "confidence",
+          "confidenceBreakdown",
+          "proofScore",
+          "proofScoreComponents",
+          "confidenceGaps",
           "records",
           "memo",
           "analystOutput",
@@ -160,6 +300,9 @@ export const proofSpendOpenApi = {
           id: { type: "string" },
           input: { type: "string" },
           subject: { type: "string" },
+          parentRunId: { type: "string" },
+          continuedFromGapId: { type: "string" },
+          continuationDepth: { type: "number" },
           budgetCapUsd: { type: "number" },
           spentUsd: { type: "number" },
           paidCalls: { type: "number" },
@@ -168,6 +311,18 @@ export const proofSpendOpenApi = {
           policyProfile: { type: "string", enum: ["standard", "strict"] },
           recommendation: { type: "string", enum: ["buy", "do_not_buy", "need_more_evidence"] },
           confidence: { type: "number" },
+          confidenceBreakdown: { $ref: "#/components/schemas/ConfidenceBreakdown" },
+          proofScore: { type: "number" },
+          proofScoreComponents: { $ref: "#/components/schemas/ProofScoreComponents" },
+          confidenceGaps: {
+            type: "array",
+            items: { $ref: "#/components/schemas/ConfidenceGap" },
+          },
+          decisionFactors: {
+            type: "array",
+            items: { $ref: "#/components/schemas/DecisionFactor" },
+          },
+          confidenceCeiling: { $ref: "#/components/schemas/ConfidenceCeiling" },
           records: {
             type: "array",
             items: { $ref: "#/components/schemas/EvidenceRecord" },
@@ -211,6 +366,7 @@ export const proofSpendOpenApi = {
           "estimatedPaidCallCostUsd",
           "estimatedBaselineCalls",
           "estimatedMaxCalls",
+          "estimatedConfidenceRange",
           "uptimeSeconds",
           "rateLimits",
           "recentWebhookDeliveries",
@@ -230,6 +386,15 @@ export const proofSpendOpenApi = {
           estimatedPaidCallCostUsd: { type: "number" },
           estimatedBaselineCalls: { type: "number" },
           estimatedMaxCalls: { type: "number" },
+          estimatedConfidenceRange: {
+            type: "object",
+            required: ["baselineMin", "baselineMax", "upperBoundWithSkeptic"],
+            properties: {
+              baselineMin: { type: "number" },
+              baselineMax: { type: "number" },
+              upperBoundWithSkeptic: { type: "number" },
+            },
+          },
           uptimeSeconds: { type: "number" },
           rateLimits: {
             type: "object",

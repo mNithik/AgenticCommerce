@@ -10,10 +10,44 @@ export type PolicyStatus = "allowed" | "blocked";
 
 export type Recommendation = "buy" | "do_not_buy" | "need_more_evidence";
 
+export type ConfidenceGapActionType = "paid_search" | "trial" | "internal_data";
+export type ConfidenceGapTheme =
+  | "legal_resolution"
+  | "pricing_validation"
+  | "implementation_validation"
+  | "deliverability_validation"
+  | "general_validation";
+
+export type DiligenceRequestedSection =
+  | "competitive"
+  | "pricing"
+  | "roi"
+  | "legal"
+  | "implementation"
+  | "fit";
+
+export type DiligenceBrief = {
+  rawQuestion: string;
+  subject: string;
+  useCaseContext?: string;
+  decisionFrame?: "buy" | "wait" | "avoid" | "spend";
+  requestedSections: DiligenceRequestedSection[];
+  spendSignal?: string;
+  companyStage?: string;
+};
+
 export type SearchSource = {
   title: string;
   url: string;
   snippet: string;
+  score?: number;
+};
+
+export type StructuredFindingMeta = {
+  summary: string;
+  riskFlags: string[];
+  positiveSignals: string[];
+  theme?: ConfidenceGapTheme;
 };
 
 export type EvidenceRecord = {
@@ -26,6 +60,7 @@ export type EvidenceRecord = {
   costUsd: number;
   receipt: string;
   finding: string;
+  findingMeta?: StructuredFindingMeta;
   sources: SearchSource[];
   policyStatus: PolicyStatus;
 };
@@ -55,6 +90,76 @@ export type AnalystOutput = {
   nextSteps: MemoClaim[];
 };
 
+export type ConfidenceAgentSignal = {
+  agent: AgentName;
+  confidence?: number;
+  negativity?: number;
+  ran: boolean;
+  recordId?: string;
+};
+
+export type ConfidenceFactor = {
+  id: string;
+  label: string;
+  impact: number;
+  recordIds?: string[];
+};
+
+export type DecisionFactor = {
+  id: string;
+  label: string;
+  impact: "positive" | "negative" | "blocking";
+  recordIds?: string[];
+};
+
+export type PolicyAdjustment = {
+  rule: string;
+  delta: number;
+  reason: string;
+};
+
+export type ConfidenceCeiling = {
+  value: number;
+  reason: string;
+  recordIds?: string[];
+};
+
+export type CounterRecordSignal = {
+  recordId: string;
+  negativity: number;
+  theme?: ConfidenceGapTheme;
+};
+
+export type ConfidenceBreakdown = {
+  overall: number;
+  agentSignals: ConfidenceAgentSignal[];
+  factors: ConfidenceFactor[];
+  policyAdjustments: PolicyAdjustment[];
+  effectiveCounterRisk?: number;
+  confidenceCeiling?: ConfidenceCeiling | null;
+};
+
+export type ProofScoreComponents = {
+  overall: number;
+  citationCoverage: number;
+  runCompleteness: number;
+};
+
+export type ConfidenceGap = {
+  id: string;
+  title: string;
+  detail?: string;
+  estimatedConfidenceGain: number;
+  estimatedCostUsd: number;
+  suggestedQuery?: string;
+  actionType: ConfidenceGapActionType;
+  recordIds?: string[];
+  focusAgent?: AgentName;
+  parentRunId?: string;
+  theme?: ConfidenceGapTheme;
+  priority?: number;
+};
+
 export type HealthStatusResponse = {
   ok: true;
   app: "ProofSpend";
@@ -66,10 +171,16 @@ export type HealthStatusResponse = {
   walletConfigured: boolean;
   searchReady: boolean;
   snapshotSigningAvailable: boolean;
+  apiAuthRequired: boolean;
   readinessSummary: string;
   estimatedPaidCallCostUsd: number;
   estimatedBaselineCalls: number;
   estimatedMaxCalls: number;
+  estimatedConfidenceRange: {
+    baselineMin: number;
+    baselineMax: number;
+    upperBoundWithSkeptic: number;
+  };
   uptimeSeconds: number;
   rateLimits: Record<string, { limit: number; windowMs: number }>;
   recentWebhookDeliveries: WebhookDeliveryStatus[];
@@ -118,6 +229,10 @@ export type DiligenceRun = {
   id: string;
   input: string;
   subject: string;
+  diligenceBrief?: DiligenceBrief;
+  parentRunId?: string;
+  continuedFromGapId?: string;
+  continuationDepth?: number;
   budgetCapUsd: number;
   spentUsd: number;
   paidCalls: number;
@@ -126,6 +241,12 @@ export type DiligenceRun = {
   policyProfile: PolicyProfile;
   recommendation: Recommendation;
   confidence: number;
+  confidenceBreakdown: ConfidenceBreakdown;
+  proofScore: number;
+  proofScoreComponents: ProofScoreComponents;
+  confidenceGaps: ConfidenceGap[];
+  decisionFactors?: DecisionFactor[];
+  confidenceCeiling?: ConfidenceCeiling | null;
   records: EvidenceRecord[];
   memo: string;
   analystOutput: AnalystOutput;
@@ -164,7 +285,7 @@ export type SnapshotEnvelope = {
 };
 
 export type ProofVerificationResult = {
-  ok: true;
+  ok: boolean;
   verified: boolean;
   digestMatch: boolean;
   signatureMatch: boolean | null;
@@ -208,6 +329,29 @@ export type RunEvent =
       agent: AgentName;
       reason: string;
       spentUsd: number;
+    }
+  | {
+      type: "confidence_updated";
+      overall: number;
+      proofScore: number;
+      reason: string;
+      agent?: AgentName;
+      recordId?: string;
+    }
+  | {
+      type: "follow_up_started";
+      agent: AgentName;
+      queryPreview: string;
+      gapId: string;
+      projectedSpendUsd: number;
+    }
+  | {
+      type: "follow_up_completed";
+      agent: AgentName;
+      gapId: string;
+      record: EvidenceRecord;
+      spentUsd: number;
+      paidCalls: number;
     }
   | {
       type: "search_failed";

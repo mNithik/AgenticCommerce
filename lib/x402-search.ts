@@ -2,6 +2,15 @@ import { runAwal } from "./awal-cli";
 import { config, resolvePaymentMode } from "./config";
 import { mockPaidSearch } from "./mock/search-fixtures";
 import type { AgentName, PaymentMode, SearchSource } from "./types";
+import { buildTavilyBody, minimalTavilyBody } from "./search-payload";
+
+export type SearchOptions = {
+  query: string;
+  max_results?: number;
+  search_depth?: "basic" | "advanced";
+  include_domains?: string[];
+  time_range?: "day" | "week" | "month" | "year";
+};
 
 type PaidSearchResult = {
   sources: SearchSource[];
@@ -164,6 +173,12 @@ export function parseAwalJson(raw: string) {
         title: String(item.title ?? "Untitled source"),
         url: String(item.url ?? ""),
         snippet: String(item.content ?? item.raw_content ?? item.snippet ?? ""),
+        score:
+          typeof item.score === "number"
+            ? item.score
+            : typeof item.relevance_score === "number"
+              ? item.relevance_score
+              : undefined,
       }))
     : [];
 
@@ -222,37 +237,45 @@ export function parseAwalJson(raw: string) {
 }
 
 async function livePaidSearch(params: {
-  query: string;
-  maxResults: number;
+  options: SearchOptions;
 }): Promise<PaidSearchResult> {
-  const body = JSON.stringify({
-    query: params.query,
-    max_results: params.maxResults,
-    include_answer: false,
-  });
+  const runRequest = async (body: Record<string, unknown>) => {
+    const args = [
+      "-y",
+      "awal",
+      "x402",
+      "pay",
+      config.tavilyX402Url,
+      "-X",
+      "POST",
+      "-d",
+      JSON.stringify(body),
+      "--max-amount",
+      config.awalMaxAmount,
+      "--json",
+    ];
 
-  const args = [
-    "-y",
-    "awal",
-    "x402",
-    "pay",
-    config.tavilyX402Url,
-    "-X",
-    "POST",
-    "-d",
-    body,
-    "--max-amount",
-    config.awalMaxAmount,
-    "--json",
-  ];
+    return runAwal(args, {
+      maxBuffer: 10 * 1024 * 1024,
+      env: {
+        ...process.env,
+        AGENT_WALLET_KEY: config.agentWalletKey,
+      },
+    });
+  };
 
-  const { stdout } = await runAwal(args, {
-    maxBuffer: 10 * 1024 * 1024,
-    env: {
-      ...process.env,
-      AGENT_WALLET_KEY: config.agentWalletKey,
-    },
-  });
+  const primaryBody = buildTavilyBody(params.options);
+  let stdout: string | Buffer;
+  try {
+    ({ stdout } = await runRequest(primaryBody));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/validation failed/i.test(message)) {
+      ({ stdout } = await runRequest(minimalTavilyBody(params.options)));
+    } else {
+      throw error;
+    }
+  }
 
   const parsed = parseAwalJson(
     typeof stdout === "string" ? stdout : stdout.toString("utf8"),
@@ -263,7 +286,7 @@ async function livePaidSearch(params: {
   }
 
   return {
-    sources: parsed.results,
+    sources: parsed.results.filter((source) => source.score === undefined || source.score >= 0.5).slice(0, 5),
     receipt: parsed.receipt,
     costUsd: parsed.costUsd || estimatePaidSearchCostUsd(),
     paymentMode: "live",
@@ -278,6 +301,7 @@ export async function paidSearch(params: {
   callIndex: number;
   subject: string;
   maxResults?: number;
+  options?: Omit<SearchOptions, "query">;
 }) {
   if (resolvePaymentMode() === "mock") {
     return mockPaidSearch({
@@ -290,7 +314,10 @@ export async function paidSearch(params: {
   }
 
   return livePaidSearch({
-    query: params.query,
-    maxResults: params.maxResults ?? 5,
+    options: {
+      query: params.query,
+      max_results: params.maxResults ?? 5,
+      ...params.options,
+    },
   });
 }

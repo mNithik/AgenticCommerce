@@ -1,4 +1,4 @@
-import type { AgentName, SafeSpendEvent } from "./types";
+import type { AgentName, EvidenceRecord, SafeSpendEvent } from "./types";
 import { asMoney, normalizeQuery } from "./text-utils";
 
 function redactQuery(query: string) {
@@ -29,6 +29,17 @@ export class SafeSpend {
   constructor(options: SafeSpendOptions) {
     this.budgetCapUsd = options.budgetCapUsd;
     this.maxPaidCalls = options.maxPaidCalls ?? 4;
+  }
+
+  seedFromRecords(records: Pick<EvidenceRecord, "normalizedQuery" | "receipt">[]) {
+    for (const record of records) {
+      if (record.normalizedQuery) {
+        this.querySet.add(record.normalizedQuery);
+      }
+      if (record.receipt) {
+        this.receiptSet.add(record.receipt);
+      }
+    }
   }
 
   batchPreflight(params: {

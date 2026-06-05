@@ -32,6 +32,27 @@ describe("SafeSpend", () => {
     expect(overflow.status).toBe("blocked");
   });
 
+  it("blocks duplicate queries seeded from prior records", () => {
+    const safeSpend = new SafeSpend({ budgetCapUsd: 0.05, maxPaidCalls: 4 });
+    safeSpend.seedFromRecords([
+      {
+        normalizedQuery: "apollo io lawsuit compliance",
+        receipt: "mock:counter",
+      },
+    ]);
+
+    const duplicate = safeSpend.beforePaidCall({
+      agent: "Counter",
+      query: "apollo io lawsuit compliance",
+      spentUsd: 0.03,
+      projectedCostUsd: 0.01,
+      paidCalls: 3,
+    });
+
+    expect(duplicate.status).toBe("blocked");
+    expect(duplicate.reason).toContain("Duplicate query");
+  });
+
   it("blocks sensitive queries and over-budget batch plans", () => {
     const safeSpend = new SafeSpend({ budgetCapUsd: 0.02, maxPaidCalls: 4 });
 

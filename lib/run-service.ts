@@ -14,6 +14,10 @@ type ExecuteRunOptions = {
   budgetCapUsd: number;
   policyProfile?: PolicyProfile;
   callbackUrl?: string;
+  parentRunId?: string;
+  parentRun?: DiligenceRun;
+  gapId?: string;
+  suggestedQuery?: string;
   emit?: (event: RunEvent) => void;
 };
 
@@ -22,6 +26,10 @@ export async function executeRun({
   budgetCapUsd,
   policyProfile,
   callbackUrl,
+  parentRunId,
+  parentRun,
+  gapId,
+  suggestedQuery,
   emit,
 }: ExecuteRunOptions): Promise<DiligenceRun> {
   recordObservabilityEvent({
@@ -32,6 +40,8 @@ export async function executeRun({
       budgetCapUsd,
       policyProfile: policyProfile ?? "standard",
       callback: Boolean(callbackUrl),
+      parentRunId: parentRunId ?? null,
+      gapId: gapId ?? null,
     },
   });
 
@@ -41,6 +51,10 @@ export async function executeRun({
       question,
       budgetCapUsd,
       policyProfile,
+      parentRunId,
+      parentRun,
+      gapId,
+      suggestedQuery,
       emit: emit ?? (() => undefined),
     });
   } catch (error) {

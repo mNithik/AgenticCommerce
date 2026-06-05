@@ -12,3 +12,11 @@ export function addRecentRun(run: DiligenceRun) {
 export function getRecentRuns() {
   return recentRuns.slice();
 }
+
+export function getRecentRunById(id: string) {
+  return recentRuns.find((run) => run.id === id) ?? null;
+}
+
+export function clearRecentRuns() {
+  recentRuns.length = 0;
+}

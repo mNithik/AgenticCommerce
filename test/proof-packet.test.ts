@@ -5,20 +5,20 @@ import {
   buildProofPacketMarkdown,
 } from "../lib/proof-packet";
 import type { DiligenceRun } from "../lib/types";
+import { makeConfidenceBreakdown, makeDiligenceRun, makeProofScoreComponents } from "./fixtures";
 
 const baseRun: DiligenceRun = {
-  id: "run_abc123",
-  input: "Should I spend $500 per month on Apollo.io for B2B lead generation?",
-  subject: "Apollo.io",
-  budgetCapUsd: 0.25,
-  spentUsd: 0.03,
-  paidCalls: 3,
-  paymentMode: "live",
-  llmProvider: "nvidia",
-  policyProfile: "standard",
-  recommendation: "need_more_evidence",
-  confidence: 0.62,
-  memo: "Apollo.io appears promising, but sales-team fit and list quality need validation.",
+  ...makeDiligenceRun({
+    id: "run_abc123",
+    input: "Should I spend $500 per month on Apollo.io for B2B lead generation?",
+    paymentMode: "live",
+    llmProvider: "nvidia",
+    confidence: 0.62,
+    confidenceBreakdown: makeConfidenceBreakdown({ overall: 0.62 }),
+    proofScore: 71,
+    proofScoreComponents: makeProofScoreComponents({ overall: 0.62 }),
+    memo: "Apollo.io appears promising, but sales-team fit and list quality need validation.",
+  }),
   records: [
     {
       id: "record_market",
@@ -41,7 +41,7 @@ const baseRun: DiligenceRun = {
     },
   ],
   analystOutput: {
-    recommendation: "need_more_evidence",
+    ...makeDiligenceRun().analystOutput,
     confidence: 0.62,
     rationale: {
       id: "claim_rationale",
@@ -109,6 +109,8 @@ describe("proof packet export", () => {
     expect(markdown).toContain("# ProofSpend Proof Packet");
     expect(markdown).toContain("Question: Should I spend $500 per month on Apollo.io");
     expect(markdown).toContain("## Verification");
+    expect(markdown).toContain("## Confidence Breakdown");
+    expect(markdown).toContain("Proof Score: 71/100");
     expect(markdown).toContain("Trace: record ids: record_market | sources: https://www.apollo.io/pricing");
     expect(markdown).toContain("[0x123abc](https://basescan.org/tx/0x123abc)");
     expect(markdown).toContain("## SafeSpend Log");

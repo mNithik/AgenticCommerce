@@ -90,6 +90,9 @@ function toolDefinitions() {
           budgetCapUsd: { type: "number" },
           policyProfile: { type: "string", enum: ["standard", "strict"] },
           callbackUrl: { type: "string" },
+          parentRunId: { type: "string" },
+          gapId: { type: "string" },
+          suggestedQuery: { type: "string" },
         },
       },
     },
@@ -115,6 +118,17 @@ function toolDefinitions() {
       name: "proofspend.get_openapi",
       description: "Fetch the ProofSpend OpenAPI document.",
       inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "proofspend.explain_confidence",
+      description: "Return the confidence breakdown, proof score, and gaps for a run payload.",
+      inputSchema: {
+        type: "object",
+        required: ["run"],
+        properties: {
+          run: { type: "object" },
+        },
+      },
     },
   ];
 }
@@ -190,6 +204,13 @@ async function callTool(
           : Number(args.budgetCapUsd);
       const callbackUrl =
         typeof args.callbackUrl === "string" ? args.callbackUrl.trim() : undefined;
+      const parentRunId =
+        typeof args.parentRunId === "string" ? args.parentRunId.trim() : undefined;
+      const gapId = typeof args.gapId === "string" ? args.gapId.trim() : undefined;
+      const suggestedQuery =
+        typeof args.suggestedQuery === "string"
+          ? args.suggestedQuery.trim()
+          : undefined;
       const policyProfile =
         args.policyProfile === "standard" || args.policyProfile === "strict"
           ? (args.policyProfile as PolicyProfile)
@@ -207,6 +228,9 @@ async function callTool(
         budgetCapUsd,
         policyProfile,
         callbackUrl,
+        parentRunId,
+        gapId,
+        suggestedQuery,
       });
     }
     case "proofspend.verify_proof": {
@@ -220,6 +244,25 @@ async function callTool(
       return buildHealthStatus();
     case "proofspend.get_openapi":
       return proofSpendOpenApi;
+    case "proofspend.explain_confidence": {
+      const run =
+        args.run && typeof args.run === "object" ? (args.run as DiligenceRun) : null;
+      if (!run) {
+        throw new Error("run is required.");
+      }
+
+      return {
+        runId: run.id,
+        subject: run.subject,
+        confidence: run.confidence,
+        proofScore: run.proofScore,
+        confidenceBreakdown: run.confidenceBreakdown,
+        confidenceGaps: run.confidenceGaps,
+        decisionFactors: run.decisionFactors ?? [],
+        confidenceCeiling: run.confidenceCeiling ?? run.confidenceBreakdown?.confidenceCeiling ?? null,
+        effectiveCounterRisk: run.confidenceBreakdown?.effectiveCounterRisk ?? null,
+      };
+    }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

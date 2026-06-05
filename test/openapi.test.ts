@@ -22,13 +22,40 @@ describe("ProofSpend OpenAPI", () => {
     ).toHaveProperty("callbackUrl");
     expect(
       proofSpendOpenApi.components.schemas.RunDiligenceRequest.properties,
+    ).toHaveProperty("parentRunId");
+    expect(
+      proofSpendOpenApi.components.schemas.RunDiligenceRequest.properties,
+    ).toHaveProperty("gapId");
+    expect(
+      proofSpendOpenApi.components.schemas.RunDiligenceRequest.properties,
+    ).toHaveProperty("suggestedQuery");
+    expect(
+      proofSpendOpenApi.components.schemas.RunDiligenceRequest.properties,
     ).toHaveProperty("stream");
     expect(
       proofSpendOpenApi.components.schemas.HealthStatusResponse.properties,
     ).toHaveProperty("uptimeSeconds");
     expect(
+      proofSpendOpenApi.components.schemas.HealthStatusResponse.properties,
+    ).toHaveProperty("estimatedConfidenceRange");
+    expect(
       proofSpendOpenApi.components.schemas.DiligenceRun.properties,
     ).toHaveProperty("webhookDelivery");
+    expect(
+      proofSpendOpenApi.components.schemas.DiligenceRun.properties,
+    ).toHaveProperty("confidenceBreakdown");
+    expect(
+      proofSpendOpenApi.components.schemas.DiligenceRun.properties,
+    ).toHaveProperty("proofScore");
+    expect(
+      proofSpendOpenApi.components.schemas.DiligenceRun.properties,
+    ).toHaveProperty("confidenceGaps");
+    expect(
+      proofSpendOpenApi.components.schemas.DiligenceRun.properties,
+    ).toHaveProperty("parentRunId");
+    expect(
+      proofSpendOpenApi.components.schemas.DiligenceRun.properties,
+    ).toHaveProperty("continuedFromGapId");
   });
 
   it("serves the OpenAPI document from the route", async () => {

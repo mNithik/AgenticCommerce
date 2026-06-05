@@ -162,6 +162,7 @@ export async function buildProofPacketMarkdown(
     `- Subject: ${run.subject}`,
     `- Recommendation: ${run.recommendation}`,
     `- Confidence: ${Math.round(run.confidence * 100)}%`,
+    `- Proof Score: ${run.proofScore}/100`,
     `- Payment mode: ${run.paymentMode}`,
     `- LLM provider: ${run.llmProvider}`,
     `- Policy profile: ${run.policyProfile}`,
@@ -179,6 +180,62 @@ export async function buildProofPacketMarkdown(
       : "- Signature: none",
     `- Verify endpoint: POST /api/verify-proof`,
     "",
+    "## Confidence Breakdown",
+    "",
+    `- Overall confidence: ${Math.round(run.confidenceBreakdown.overall * 100)}%`,
+    `- Proof Score: ${run.proofScore}/100`,
+    `- Citation coverage: ${Math.round(run.proofScoreComponents.citationCoverage * 100)}%`,
+    `- Run completeness: ${Math.round(run.proofScoreComponents.runCompleteness * 100)}%`,
+    "",
+    ...run.confidenceBreakdown.agentSignals.map(
+      (signal) =>
+        `- ${signal.agent}: ${signal.confidence !== undefined ? `${Math.round(signal.confidence * 100)}% confidence` : signal.negativity !== undefined ? `${Math.round(signal.negativity * 100)}% risk` : signal.ran ? "completed" : "skipped"}`
+    ),
+    "",
+    ...run.confidenceBreakdown.factors.map(
+      (factor) =>
+        `- ${factor.label} (${factor.impact >= 0 ? "+" : ""}${Math.round(factor.impact * 100)} pts)${factor.recordIds?.length ? ` | records: ${factor.recordIds.join(", ")}` : ""}`
+    ),
+    "",
+    ...(run.confidenceBreakdown.policyAdjustments.length > 0
+      ? [
+          "### Policy Adjustments",
+          "",
+          ...run.confidenceBreakdown.policyAdjustments.map(
+            (adjustment) =>
+              `- ${adjustment.rule}: ${adjustment.reason} (${adjustment.delta >= 0 ? "+" : ""}${Math.round(adjustment.delta * 100)} pts)`,
+          ),
+          "",
+        ]
+      : []),
+    ...(run.confidenceGaps.length > 0
+      ? [
+          "## Confidence Gaps",
+          "",
+          ...run.confidenceGaps.map(
+            (gap) =>
+              `- ${gap.title} | +${Math.round(gap.estimatedConfidenceGain * 100)} pts | ${toCurrency(gap.estimatedCostUsd)} | ${gap.actionType}${gap.suggestedQuery ? ` | query: ${gap.suggestedQuery}` : ""}`,
+          ),
+          "",
+        ]
+      : []),
+    ...(run.decisionFactors?.length
+      ? [
+          "## Why This Verdict",
+          "",
+          ...run.decisionFactors.map((factor) => `- ${factor.label}`),
+          "",
+        ]
+      : []),
+    ...(run.confidenceCeiling
+      ? [
+          "## Confidence Ceiling",
+          "",
+          `- Capped at ${Math.round(run.confidenceCeiling.value * 100)}%`,
+          `- Reason: ${run.confidenceCeiling.reason}`,
+          "",
+        ]
+      : []),
     "## Rationale",
     "",
     `${run.analystOutput.rationale.claimText}`,

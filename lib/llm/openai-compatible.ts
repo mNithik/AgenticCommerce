@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { deterministicProvider } from "./deterministic";
-import type { AnalystOutput, LLMProviderName } from "../types";
+import type { AnalystOutput, LLMProviderName, StructuredFindingMeta } from "../types";
 import type { AnalystInput, LLMProvider, SummaryInput } from "./provider";
 import { clamp, makeId, unique } from "../text-utils";
 import type { AgentName, MemoClaim, Recommendation } from "../types";
@@ -25,9 +25,11 @@ function normalizeWhitespace(value: string) {
 function stripSummaryLeadIn(value: string) {
   return value
     .replace(/^here(?:'s| is)\s+(?:a\s+)?concise\s+evidence\s+summary(?::)?\s*/i, "")
+    .replace(/^evidence summary:\s*/i, "")
     .replace(/^based on the provided sources[:,]?\s*/i, "")
     .replace(/^in summary[:,]?\s*/i, "")
     .replace(/^overall[:,]?\s*/i, "")
+    .replace(/^of [A-Z][A-Za-z0-9.+-]+'?s\s+/i, "")
     .trim();
 }
 
@@ -326,6 +328,55 @@ export class OpenAICompatibleProvider implements LLMProvider {
     );
   }
 
+  async summarizeFindingStructured(input: SummaryInput): Promise<StructuredFindingMeta> {
+    const sources = input.sources
+      .map(
+        (source, index) =>
+          `${index + 1}. ${source.title}\nURL: ${source.url}\nSnippet: ${source.snippet}`,
+      )
+      .join("\n\n");
+
+    const output = await this.complete(this.summaryModel, [
+      {
+        role: "system",
+        content:
+          "Return only valid JSON with keys summary, riskFlags, positiveSignals, and theme. theme must be one of legal_resolution, pricing_validation, implementation_validation, deliverability_validation, general_validation. Keep summary concise and claim-like.",
+      },
+      {
+        role: "user",
+        content:
+          `Agent: ${input.agent}\nSubject: ${input.subject}\nQuery: ${input.query}\n\nSources:\n${sources}`,
+      },
+    ]);
+
+    try {
+      const parsed = JSON.parse(extractJsonBlock(output)) as Partial<StructuredFindingMeta>;
+      return {
+        summary: toClaimText(parsed.summary ?? "", `${input.subject} evidence is still mixed.`),
+        riskFlags: Array.isArray(parsed.riskFlags) ? parsed.riskFlags.map(String) : [],
+        positiveSignals: Array.isArray(parsed.positiveSignals)
+          ? parsed.positiveSignals.map(String)
+          : [],
+        theme:
+          parsed.theme === "legal_resolution" ||
+          parsed.theme === "pricing_validation" ||
+          parsed.theme === "implementation_validation" ||
+          parsed.theme === "deliverability_validation" ||
+          parsed.theme === "general_validation"
+            ? parsed.theme
+            : undefined,
+      };
+    } catch {
+      const summary = await this.summarizeFinding(input);
+      return {
+        summary,
+        riskFlags: [],
+        positiveSignals: [],
+        theme: undefined,
+      };
+    }
+  }
+
   async scoreConfidence(text: string) {
     const output = await this.complete(this.summaryModel, [
       {
@@ -394,12 +445,12 @@ export class OpenAICompatibleProvider implements LLMProvider {
       {
         role: "system",
         content:
-          "You are a venture diligence analyst. Return only valid JSON with keys recommendation, confidence, rationale, strengths, concerns, nextSteps. The rationale must be an object, not a string. Each claim object must include claimText, recordIds, and sourceUrls. Use only the provided record ids and URLs. Every claimText must be concise, concrete, and decision-oriented: one or two sentences max, no numbered lists, no preambles like 'here is a concise summary', and no source-by-source recitation.",
+          "You are a venture diligence analyst. Return only valid JSON with keys recommendation, confidence, rationale, strengths, concerns, nextSteps. The rationale must be an object, not a string. Each claim object must include claimText, recordIds, and sourceUrls. Use only the provided record ids and URLs. Every claimText must be concise, concrete, and decision-oriented: one or two sentences max, no numbered lists, no preambles like 'here is a concise summary', and no source-by-source recitation. When a serverRecommendation is provided, explain it faithfully instead of inventing a different verdict.",
       },
       {
         role: "user",
         content:
-          `Question: ${input.question}\nSubject: ${input.subject}\n\nRecords:\n${body}`,
+          `Question: ${input.question}\nSubject: ${input.subject}\nUse case: ${input.diligenceBrief?.useCaseContext ?? "none"}\nRequested sections: ${(input.requiredSections ?? []).join(", ") || "none"}\nServer recommendation: ${input.serverRecommendation ?? "none"}\nDecision factors: ${(input.decisionFactors ?? []).map((factor) => factor.label).join(" | ") || "none"}\nConfidence ceiling: ${input.confidenceCeiling?.reason ?? "none"}\nOpen gaps: ${(input.openGapTitles ?? []).join(" | ") || "none"}\n\nRecords:\n${body}`,
       },
     ]);
 
@@ -534,12 +585,14 @@ export class OpenAICompatibleProvider implements LLMProvider {
     const confidence = clamp(parsed.confidence ?? fallbackOutput?.confidence ?? 0.5, 0, 1);
 
     return {
-      recommendation: inferRecommendation(
-        baseRecommendation,
-        confidence,
-        repairedStrengths,
-        repairedConcerns,
-      ),
+      recommendation:
+        input.serverRecommendation ??
+        inferRecommendation(
+          baseRecommendation,
+          confidence,
+          repairedStrengths,
+          repairedConcerns,
+        ),
       confidence,
       rationale: sanitizedRationale,
       strengths: repairedStrengths,

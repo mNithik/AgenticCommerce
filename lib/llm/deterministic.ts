@@ -1,5 +1,5 @@
 import type { AnalystInput, LLMProvider, SummaryInput } from "./provider";
-import type { AnalystOutput } from "../types";
+import type { AnalystOutput, StructuredFindingMeta } from "../types";
 import { clamp, makeId, unique } from "../text-utils";
 
 function pickSentence(text: string, fallback: string) {
@@ -10,6 +10,8 @@ function conciseClaim(text: string, fallback: string) {
   const cleaned = text
     .replace(/^here(?:'s| is)\s+(?:a\s+)?concise\s+evidence\s+summary(?::)?\s*/i, "")
     .replace(/^based on the provided sources[:,]?\s*/i, "")
+    .replace(/^evidence summary:\s*/i, "")
+    .replace(/^of [A-Z][A-Za-z0-9.+-]+'?s\s+/i, "")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -52,6 +54,26 @@ export const deterministicProvider: LLMProvider = {
 
     return `${posture} ${sourceSummary || "the available evidence"}. This summary is deterministic fallback output for ${input.agent.toLowerCase()} research on ${input.subject}.`;
   },
+  async summarizeFindingStructured(input: SummaryInput): Promise<StructuredFindingMeta> {
+    const summary = await this.summarizeFinding(input);
+    const lower = `${input.query} ${summary}`.toLowerCase();
+    const riskFlags = ["lawsuit", "complaint", "privacy", "refund", "deliverability"].filter((token) =>
+      lower.includes(token),
+    );
+    const positiveSignals = ["roi", "reference", "case study", "pricing", "trusted"].filter((token) =>
+      lower.includes(token),
+    );
+    const theme = lower.includes("lawsuit") || lower.includes("privacy")
+      ? "legal_resolution"
+      : lower.includes("pricing") || lower.includes("contract") || lower.includes("roi")
+        ? "pricing_validation"
+        : lower.includes("implementation") || lower.includes("reference")
+          ? "implementation_validation"
+          : lower.includes("deliverability") || lower.includes("bounce")
+            ? "deliverability_validation"
+            : "general_validation";
+    return { summary, riskFlags, positiveSignals, theme };
+  },
   async scoreConfidence(text) {
     return keywordScore(text, ["growing", "strong", "adoption", "demand", "trusted"]);
   },
@@ -82,11 +104,12 @@ export const deterministicProvider: LLMProvider = {
     const positiveSignals = strengths.length;
     const negativeSignals = concerns.length;
     const recommendation =
-      negativeSignals > positiveSignals
+      input.serverRecommendation ??
+      (negativeSignals > positiveSignals
         ? "do_not_buy"
         : positiveSignals === 0
           ? "need_more_evidence"
-          : "buy";
+          : "buy");
     const confidence = clamp(0.45 + positiveSignals * 0.12 - negativeSignals * 0.08, 0.2, 0.85);
 
     return {

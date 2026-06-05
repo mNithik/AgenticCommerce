@@ -15,6 +15,7 @@ ProofSpend is a Next.js MVP for receipt-backed autonomous diligence. A user subm
 - creates shareable snapshot links for completed runs
 - compares two vendor diligence runs side by side
 - includes an in-app API guide for agent and webhook integrations
+- surfaces a deterministic `proofScore` plus explainable confidence breakdowns and confidence gaps
 
 ## Modes
 
@@ -146,7 +147,7 @@ Most important values:
 - blocks over-budget paid calls before payment
 - blocks duplicate normalized queries
 - blocks duplicate receipts
-- caps paid calls at 4 per run
+- derives paid-call caps from policy and budget
 - redacts sensitive fragments from user-visible query previews
 
 ## API surface
@@ -160,7 +161,10 @@ Request body:
   "question": "Should I spend $500 per month on Apollo.io for B2B lead generation for my early-stage SaaS startup?",
   "budgetCapUsd": 0.25,
   "policyProfile": "standard",
-  "callbackUrl": "https://example.com/webhook"
+  "callbackUrl": "https://example.com/webhook",
+  "parentRunId": "run_abc123",
+  "gapId": "gap-counter-deep-dive",
+  "suggestedQuery": "Apollo.io lawsuit compliance legal response customer complaints deliverability"
 }
 ```
 
@@ -169,9 +173,15 @@ Notes:
 - response is `text/event-stream`
 - `policyProfile` supports `standard` and `strict`
 - `callbackUrl` is optional and receives the final `DiligenceRun` JSON as a best-effort POST after completion
+- `parentRunId`, `gapId`, and `suggestedQuery` are optional and enable local-first continuation runs from a confidence gap
 - add `?stream=false` or body `"stream": false` to receive the final `DiligenceRun` JSON directly instead of SSE
 - when `WEBHOOK_SECRET` is set, callback deliveries include `X-ProofSpend-Timestamp` and `X-ProofSpend-Signature`
 - when `PROOFSPEND_API_KEY` is set, callers must send `Authorization: Bearer <key>`
+- the final run now includes:
+  - `confidence`: deterministic overall confidence in the `0..1` range
+  - `proofScore`: user-facing trust score in the `0..100` range
+  - `confidenceBreakdown`: per-agent signals, named factors, and policy adjustments
+  - `confidenceGaps`: the top recommended next actions to raise confidence
 
 ### `GET /api/health`
 
@@ -181,6 +191,7 @@ The payload also includes lightweight operational diagnostics:
 - process uptime
 - current in-memory rate-limit settings
 - recent webhook delivery outcomes
+- heuristic pre-run confidence ranges for the standard 3-call baseline and the optional skeptic path
 
 ### `GET /api/openapi`
 
@@ -203,6 +214,7 @@ Current MCP tools:
 - `proofspend.verify_proof`
 - `proofspend.get_health`
 - `proofspend.get_openapi`
+- `proofspend.explain_confidence`
 
 Current MCP resources:
 
@@ -219,6 +231,25 @@ Accepts a completed `DiligenceRun` and returns an encoded snapshot plus its atte
 ### `POST /api/verify-proof`
 
 Accepts either a `snapshot` string, a `proofPacket` JSON object, or a `run` plus `attestation`, then returns a verification result showing whether the digest and optional signature still match.
+
+## Confidence contract
+
+ProofSpend now treats confidence as a first-class product surface, not just a model guess:
+
+- `confidence` is the deterministic overall research confidence in the `0..1` range
+- `proofScore` is the primary user-facing trust score in the `0..100` range
+- `proofScoreComponents` break that into:
+  - `overall`
+  - `citationCoverage`
+  - `runCompleteness`
+- `confidenceBreakdown` includes:
+  - per-agent confidence and negativity signals
+  - named positive/negative factors
+  - explicit policy adjustments such as strict-mode buy suppression
+- `confidenceGaps` describe the highest-leverage next action to improve certainty, including estimated gain and spend
+- paid-search gaps can be continued with a one-click follow-up run that reuses prior evidence and only buys the missing search
+
+Confidence is bounded by the evidence collected in the run. It is a research score, not financial, legal, or procurement advice.
 
 ## Platform hardening notes
 

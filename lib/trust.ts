@@ -101,7 +101,7 @@ export async function verifyRunAttestation(
 ): Promise<ProofVerificationResult> {
   if (!attestation) {
     return {
-      ok: true,
+      ok: false,
       verified: false,
       digestMatch: false,
       signatureMatch: null,
@@ -118,7 +118,7 @@ export async function verifyRunAttestation(
   if (attestation.signingMode === "hmac-sha256") {
     if (!options?.secret) {
       return {
-        ok: true,
+        ok: false,
         verified: false,
         digestMatch,
         signatureMatch: null,
@@ -139,7 +139,7 @@ export async function verifyRunAttestation(
     const verified = digestMatch && signatureMatch;
 
     return {
-      ok: true,
+      ok: verified,
       verified,
       digestMatch,
       signatureMatch,
@@ -155,7 +155,7 @@ export async function verifyRunAttestation(
   }
 
   return {
-    ok: true,
+    ok: digestMatch,
     verified: digestMatch,
     digestMatch,
     signatureMatch: null,

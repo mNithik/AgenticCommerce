@@ -1,30 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { deserializeRunSnapshot, parseRunSnapshot, serializeRunSnapshot } from "../lib/run-sharing";
 import type { DiligenceRun } from "../lib/types";
+import { makeDiligenceRun } from "./fixtures";
 
 const run: DiligenceRun = {
-  id: "run_snapshot",
-  input: "Should I buy Apollo.io?",
-  subject: "Apollo.io",
-  budgetCapUsd: 0.25,
-  spentUsd: 0.03,
-  paidCalls: 3,
-  paymentMode: "mock",
-  llmProvider: "deterministic",
-  policyProfile: "standard",
-  recommendation: "need_more_evidence",
-  confidence: 0.5,
-  records: [],
-  memo: "memo",
-  analystOutput: {
-    recommendation: "need_more_evidence",
+  ...makeDiligenceRun({
+    id: "run_snapshot",
     confidence: 0.5,
-    rationale: { id: "claim_1", claimText: "Mixed.", recordIds: [], sourceUrls: [] },
-    strengths: [],
-    concerns: [],
-    nextSteps: [],
-  },
-  safeSpendLog: [],
+    proofScore: 63,
+  }),
 };
 
 describe("run snapshot sharing", () => {

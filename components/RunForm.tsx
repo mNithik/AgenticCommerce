@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ProofSpendDashboard } from "./proofspend/Dashboard";
+import type { RaiseConfidenceRunRequest } from "./proofspend/Dashboard";
+import { useDemoPlayback } from "./proofspend/DemoPlaybackProvider";
 import {
   analystToMemoView,
   paymentModeToUi,
@@ -23,6 +25,21 @@ import {
   parseRunSnapshot,
   serializeRunSnapshot,
 } from "../lib/run-sharing";
+import {
+  buildFailureSummary,
+  healthToUiHealth,
+  historyRowToUi,
+  memoViewToUiMemo,
+  observabilityToUiEvent,
+  scheduleToUiSchedule,
+  webhookToUiEvent,
+} from "../lib/dashboard-ui-bridge";
+import {
+  buildApiHeaders,
+  getStoredApiKey,
+  setStoredApiKey,
+} from "../lib/api-client-headers";
+import { DEMO_EVIDENCE, DEMO_MEMO, DEMO_SAFESPEND, DEMO_TIMELINE } from "../lib/demo-fixtures";
 import type {
   DiligenceRun,
   HealthStatusResponse,
@@ -46,6 +63,7 @@ async function consumeSSE(
 
   const decoder = new TextDecoder();
   let buffer = "";
+  let completed = false;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -66,9 +84,15 @@ async function consumeSSE(
         continue;
       }
 
-      onEvent(JSON.parse(line.slice(6)) as RunEvent);
+      const event = JSON.parse(line.slice(6)) as RunEvent;
+      if (event.type === "complete") {
+        completed = true;
+      }
+      onEvent(event);
     }
   }
+
+  return completed;
 }
 
 function downloadFile(filename: string, content: string, type: string) {
@@ -81,37 +105,8 @@ function downloadFile(filename: string, content: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
-function summarizeFailure(events: RunEvent[], run: DiligenceRun | null) {
-  if (run || events.length === 0) {
-    return null;
-  }
-
-  const failed = events.filter((event) => event.type === "search_failed");
-  const blocked = events.filter((event) => event.type === "policy_blocked");
-  const runError = [...events].reverse().find((event) => event.type === "run_error");
-
-  if (failed.length === 0 && blocked.length === 0 && !runError) {
-    return null;
-  }
-
-  const parts = [
-    failed.length > 0 ? `${failed.length} search failure${failed.length === 1 ? "" : "s"}` : null,
-    blocked.length > 0 ? `${blocked.length} policy block${blocked.length === 1 ? "" : "s"}` : null,
-  ].filter((part): part is string => Boolean(part));
-
-  if (runError) {
-    return runError.message;
-  }
-
-  const firstReason =
-    failed[0]?.reason ??
-    blocked[0]?.reason ??
-    "No evidence records were collected for this run.";
-
-  return `${parts.join(" and ")} prevented evidence collection. ${firstReason}`;
-}
-
 export function RunForm() {
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [question, setQuestion] = useState<string>(DEMO_QUESTION);
   const [budgetCapUsd, setBudgetCapUsd] = useState(0.25);
   const [policyProfile, setPolicyProfile] = useState<PolicyProfile>("standard");
@@ -127,6 +122,12 @@ export function RunForm() {
   const [healthUnavailable, setHealthUnavailable] = useState(false);
   const [schedules, setSchedules] = useState<ScheduleTemplate[]>([]);
   const [observabilityEvents, setObservabilityEvents] = useState<ObservabilityEvent[]>([]);
+  const [apiKey, setApiKey] = useState("");
+
+  const demoPlayback = useDemoPlayback({
+    fullTimeline: DEMO_TIMELINE,
+    fullMemo: DEMO_MEMO,
+  });
 
   const spentUsd =
     run?.spentUsd ??
@@ -142,6 +143,14 @@ export function RunForm() {
         health?.paymentMode ??
         null),
   );
+  const activePolicyProfile =
+    run?.policyProfile ??
+    events.find((event) => event.type === "run_started")?.policyProfile ??
+    health?.policyProfile ??
+    null;
+  const latestConfidenceUpdate = [...events]
+    .reverse()
+    .find((event) => event.type === "confidence_updated");
 
   async function refreshHealth() {
     try {
@@ -160,7 +169,9 @@ export function RunForm() {
 
   async function refreshSchedules() {
     try {
-      const response = await fetch("/api/schedules");
+      const response = await fetch("/api/schedules", {
+        headers: buildApiHeaders(""),
+      });
       if (!response.ok) {
         return;
       }
@@ -173,7 +184,9 @@ export function RunForm() {
 
   async function refreshObservability() {
     try {
-      const response = await fetch("/api/observability");
+      const response = await fetch("/api/observability", {
+        headers: buildApiHeaders(""),
+      });
       if (!response.ok) {
         return;
       }
@@ -185,10 +198,16 @@ export function RunForm() {
   }
 
   useEffect(() => {
+    setApiKey(getStoredApiKey());
     void refreshHealth();
     void refreshSchedules();
     void refreshObservability();
   }, []);
+
+  function handleApiKeyChange(value: string) {
+    setApiKey(value);
+    setStoredApiKey(value);
+  }
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -313,9 +332,7 @@ export function RunForm() {
   async function requestSnapshotSigning(currentRun: DiligenceRun) {
     const response = await fetch("/api/sign-snapshot", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: buildApiHeaders(),
       body: JSON.stringify({ run: currentRun }),
     });
 
@@ -330,15 +347,20 @@ export function RunForm() {
     };
   }
 
-  async function submitRun(questionOverride?: string) {
+  async function submitRun(
+    questionOverride?: string,
+    budgetOverride?: number,
+    continuation?: RaiseConfidenceRunRequest,
+  ) {
     const effectiveQuestion = (questionOverride ?? question).trim();
+    const effectiveBudget = budgetOverride ?? budgetCapUsd;
     setError(null);
 
     if (!effectiveQuestion) {
       setError("Enter a diligence question first.");
       return;
     }
-    if (budgetCapUsd <= 0) {
+    if (effectiveBudget <= 0) {
       setError("Budget cap must be greater than $0.");
       return;
     }
@@ -355,25 +377,40 @@ export function RunForm() {
       }
     }
 
+    const parentRunForContinuation =
+      continuation?.parentRunId && run?.id === continuation.parentRunId
+        ? run
+        : continuation?.parentRunId
+          ? history.find((item) => item.id === continuation.parentRunId)
+          : undefined;
+
     setIsRunning(true);
     setEvents([]);
     setRun(null);
     setSelectedRecordId(null);
+    abortControllerRef.current = new AbortController();
+
     if (questionOverride) {
       setQuestion(questionOverride);
+    }
+    if (budgetOverride !== undefined) {
+      setBudgetCapUsd(budgetOverride);
     }
 
     try {
       const response = await fetch("/api/run-diligence", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        signal: abortControllerRef.current.signal,
+        headers: buildApiHeaders(),
         body: JSON.stringify({
           question: effectiveQuestion,
-          budgetCapUsd,
+          budgetCapUsd: effectiveBudget,
           policyProfile,
           callbackUrl: callbackUrl || undefined,
+          parentRunId: continuation?.parentRunId,
+          parentRun: parentRunForContinuation,
+          gapId: continuation?.gapId,
+          suggestedQuery: continuation?.suggestedQuery,
         }),
       });
 
@@ -381,7 +418,7 @@ export function RunForm() {
         throw new Error(await response.text());
       }
 
-      await consumeSSE(response, (incomingEvent) => {
+      const completed = await consumeSSE(response, (incomingEvent) => {
         setEvents((current) => [...current, incomingEvent]);
 
         if (incomingEvent.type === "complete") {
@@ -396,15 +433,40 @@ export function RunForm() {
           void refreshObservability();
         }
       });
+
+      if (!completed && !abortControllerRef.current?.signal.aborted) {
+        setError("The diligence stream ended before a final result was returned.");
+      }
     } catch (submissionError) {
+      if (submissionError instanceof DOMException && submissionError.name === "AbortError") {
+        toast.success("Run canceled");
+        setEvents((current) => [
+          ...current,
+          {
+            type: "run_error",
+            message: "Run canceled from the dashboard before completion.",
+          },
+        ]);
+        return;
+      }
       setError(
         submissionError instanceof Error
           ? submissionError.message
           : "Unknown run error.",
       );
     } finally {
+      abortControllerRef.current = null;
       setIsRunning(false);
     }
+  }
+
+  function handleCancelRun() {
+    abortControllerRef.current?.abort();
+  }
+
+  function handleRaiseConfidenceRun(request: RaiseConfidenceRunRequest) {
+    setBudgetCapUsd(request.budgetCapUsd);
+    void submitRun(undefined, request.budgetCapUsd, request);
   }
 
   async function handleCreateSchedule(intervalMinutes: number) {
@@ -416,9 +478,7 @@ export function RunForm() {
 
     const response = await fetch("/api/schedules", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: buildApiHeaders(),
       body: JSON.stringify({
         question: effectiveQuestion,
         budgetCapUsd,
@@ -441,6 +501,7 @@ export function RunForm() {
   async function handleDeleteSchedule(scheduleId: string) {
     const response = await fetch(`/api/schedules/${scheduleId}`, {
       method: "DELETE",
+      headers: buildApiHeaders(""),
     });
     if (!response.ok) {
       toast.error(await response.text());
@@ -454,9 +515,7 @@ export function RunForm() {
   async function handleToggleSchedule(scheduleId: string, enabled: boolean) {
     const response = await fetch(`/api/schedules/${scheduleId}`, {
       method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: buildApiHeaders(),
       body: JSON.stringify({ enabled }),
     });
     if (!response.ok) {
@@ -471,6 +530,7 @@ export function RunForm() {
   async function handleRunScheduleNow(scheduleId: string) {
     const response = await fetch(`/api/schedules/${scheduleId}/run`, {
       method: "POST",
+      headers: buildApiHeaders(""),
     });
     if (!response.ok) {
       toast.error(await response.text());
@@ -485,9 +545,7 @@ export function RunForm() {
   async function handleRetryWebhook(deliveryId: string) {
     const response = await fetch("/api/webhooks/retry", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: buildApiHeaders(),
       body: JSON.stringify({ deliveryId }),
     });
     if (!response.ok) {
@@ -499,7 +557,7 @@ export function RunForm() {
     await refreshObservability();
   }
 
-  async function handleDemoRun() {
+  function handleDemoRun() {
     if (!health) {
       toast.error("Wait for system status to load before starting the demo run.");
       return;
@@ -511,10 +569,16 @@ export function RunForm() {
       return;
     }
 
-    await submitRun(DEMO_QUESTION);
+    setQuestion(DEMO_QUESTION);
+    setError(null);
+    setSelectedRecordId(null);
+    demoPlayback.start();
   }
 
-  const historyRows = useMemo(() => history.map(runToHistoryRow), [history]);
+  const historyRows = useMemo(
+    () => history.map((item, index) => historyRowToUi(runToHistoryRow(item), index)),
+    [history],
+  );
   const compareCandidates = useMemo(
     () => (run ? history.filter((item) => item.id !== run.id) : []),
     [history, run],
@@ -574,9 +638,33 @@ export function RunForm() {
     estimatedPaidCallCostUsd: health?.estimatedPaidCallCostUsd ?? 0.01,
     estimatedBaselineCalls: health?.estimatedBaselineCalls ?? 3,
     estimatedMaxCalls: health?.estimatedMaxCalls ?? 4,
+    estimatedConfidenceRange: health?.estimatedConfidenceRange
+      ? {
+          baselineMin: Math.round(health.estimatedConfidenceRange.baselineMin * 100),
+          baselineMax: Math.round(health.estimatedConfidenceRange.baselineMax * 100),
+          upperBoundWithSkeptic: Math.round(
+            health.estimatedConfidenceRange.upperBoundWithSkeptic * 100,
+          ),
+        }
+      : undefined,
   };
 
-  const failureSummary = summarizeFailure(events, run);
+  const failureSummary = buildFailureSummary(events, Boolean(run));
+
+  const liveMemo = memoViewToUiMemo(analystToMemoView(run));
+  const demoActive = demoPlayback.demoMode;
+  const displayTimeline = demoActive ? demoPlayback.timelineEvents : runEventsToTimeline(events);
+  const displayMemo = demoActive ? demoPlayback.memo : liveMemo;
+  const displayRunning = demoActive ? demoPlayback.isRunning : isRunning;
+  const displayEvidence = demoActive && demoPlayback.memo ? DEMO_EVIDENCE : runToEvidenceRows(run).map(({ paymentMode: _pm, ...row }) => row);
+  const displaySafeSpend = demoActive && demoPlayback.memo ? DEMO_SAFESPEND : safeSpendToRows(run?.safeSpendLog ?? []);
+  const displaySpentUsd = demoActive
+    ? displayTimeline.filter((event) => event.type === "payment_settled").length * 0.01
+    : spentUsd;
+  const displayPaidCalls = demoActive
+    ? displayTimeline.filter((event) => event.type === "payment_settled").length
+    : paidCalls;
+  const displayShowExport = demoActive ? Boolean(demoPlayback.memo) : Boolean(run);
 
   return (
     <ProofSpendDashboard
@@ -594,16 +682,21 @@ export function RunForm() {
       }))}
       onDemoRun={() => void handleDemoRun()}
       demoRunDisabled={!health || health.paymentMode === "live"}
-      isRunning={isRunning}
+      isRunning={displayRunning}
       onRun={() => void submitRun()}
+      onCancelRun={handleCancelRun}
       error={error}
       mode={mode}
-      spentUsd={spentUsd}
-      paidCalls={paidCalls}
-      timelineEvents={runEventsToTimeline(events)}
-      evidenceRows={runToEvidenceRows(run)}
-      memo={analystToMemoView(run?.analystOutput, run?.records ?? [])}
-      safeSpendRows={safeSpendToRows(run?.safeSpendLog ?? [])}
+      activePolicyProfile={activePolicyProfile}
+      spentUsd={displaySpentUsd}
+      paidCalls={displayPaidCalls}
+      timelineEvents={displayTimeline}
+      evidenceRows={displayEvidence}
+      memo={displayMemo}
+      safeSpendRows={displaySafeSpend}
+      demoMode={demoActive}
+      justCompleted={demoPlayback.justCompleted}
+      onReplayDemo={demoPlayback.replay}
       historyRows={historyRows}
       selectedRunId={run?.id ?? null}
       onSelectHistory={loadHistoryRun}
@@ -611,11 +704,11 @@ export function RunForm() {
       currentVendor={run ? runToCompareVendor(run) : null}
       compareVendor={compareRun ? runToCompareVendor(compareRun) : null}
       compareOptions={compareOptions}
-      compareRunId={compareRun?.id ?? ""}
+      compareRunId={compareRun?.id ?? null}
       onCompareRunChange={setCompareRunId}
       selectedRecordId={selectedRecordId}
       onSelectRecord={setSelectedRecordId}
-      showExport={Boolean(run)}
+      showExport={displayShowExport}
       onShareLink={handleShareLink}
       onExportJson={() => {
         if (!run) {
@@ -655,18 +748,36 @@ export function RunForm() {
           );
         })();
       }}
-      health={health}
+      health={healthToUiHealth(health)}
       healthUnavailable={healthUnavailable}
       estimate={estimate}
-      schedules={schedules}
-      onCreateSchedule={(intervalMinutes) => void handleCreateSchedule(intervalMinutes)}
+      schedules={schedules.map(scheduleToUiSchedule)}
+      onCreateSchedule={() => void handleCreateSchedule(60)}
       onDeleteSchedule={(scheduleId) => void handleDeleteSchedule(scheduleId)}
-      onToggleSchedule={(scheduleId, enabled) => void handleToggleSchedule(scheduleId, enabled)}
+      onToggleSchedule={(scheduleId) => {
+        const schedule = schedules.find((item) => item.id === scheduleId);
+        if (schedule) {
+          void handleToggleSchedule(scheduleId, !schedule.enabled);
+        }
+      }}
       onRunScheduleNow={(scheduleId) => void handleRunScheduleNow(scheduleId)}
       onRetryWebhook={(deliveryId) => void handleRetryWebhook(deliveryId)}
-      observabilityEvents={observabilityEvents}
+      webhookEvents={(health?.recentWebhookDeliveries ?? []).map(webhookToUiEvent)}
+      observabilityEvents={observabilityEvents.map(observabilityToUiEvent)}
       failureSummary={failureSummary}
       runIdLabel={run ? `run_id | ${run.id}` : undefined}
+      liveConfidence={
+        latestConfidenceUpdate?.type === "confidence_updated"
+          ? {
+              confidence: Math.round(latestConfidenceUpdate.overall * 100),
+              proofScore: latestConfidenceUpdate.proofScore,
+              reason: latestConfidenceUpdate.reason,
+            }
+          : null
+      }
+      onRaiseConfidenceRun={handleRaiseConfidenceRun}
+      apiKey={apiKey}
+      onApiKeyChange={handleApiKeyChange}
     />
   );
 }

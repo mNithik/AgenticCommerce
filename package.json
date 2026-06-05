@@ -13,6 +13,7 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run --exclude \"ayush/**\" --exclude \"e2e/**\"",
+    "test:x402-probe": "vitest run test/x402-market-search-probe.test.ts",
     "test:e2e": "playwright test",
     "setup:check": "node scripts/check-prerequisites.mjs",
     "smoke:llm": "node scripts/smoke-llm.mjs",

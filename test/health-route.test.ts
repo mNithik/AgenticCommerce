@@ -30,6 +30,11 @@ describe("GET /api/health", () => {
       paymentMode: "mock",
       policyProfile: "standard",
       llmProvider: "nvidia",
+      estimatedConfidenceRange: expect.objectContaining({
+        baselineMin: expect.any(Number),
+        baselineMax: expect.any(Number),
+        upperBoundWithSkeptic: expect.any(Number),
+      }),
       uptimeSeconds: expect.any(Number),
       rateLimits: expect.objectContaining({
         runDiligence: expect.objectContaining({

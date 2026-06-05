@@ -1,34 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DiligenceRun } from "../lib/types";
+import { makeDiligenceRun } from "./fixtures";
 
 const fakeRun: DiligenceRun = {
-  id: "run_test",
-  input: "Should I buy Apollo.io?",
-  subject: "Apollo.io",
-  budgetCapUsd: 0.25,
-  spentUsd: 0.03,
-  paidCalls: 3,
-  paymentMode: "mock",
-  llmProvider: "deterministic",
-  policyProfile: "standard",
-  recommendation: "need_more_evidence",
-  confidence: 0.6,
-  records: [],
-  memo: "memo",
-  analystOutput: {
-    recommendation: "need_more_evidence",
+  ...makeDiligenceRun({
+    id: "run_test",
     confidence: 0.6,
-    rationale: {
-      id: "claim_rationale",
-      claimText: "Mixed evidence.",
-      recordIds: [],
-      sourceUrls: [],
-    },
-    strengths: [],
-    concerns: [],
-    nextSteps: [],
-  },
-  safeSpendLog: [],
+    proofScore: 68,
+  }),
 };
 
 describe("POST /api/run-diligence", () => {
@@ -76,6 +55,7 @@ describe("POST /api/run-diligence", () => {
 
     expect(response.status).toBe(200);
     expect(body.id).toBe("run_test");
+    expect(body.proofScore).toBe(68);
   });
 
   it("returns 401 when auth is configured and the bearer token is missing", async () => {
@@ -129,6 +109,30 @@ describe("POST /api/run-diligence", () => {
         question: "Should I buy Apollo.io?",
         budgetCapUsd: 0.25,
         stream: false,
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.id).toBe("run_test");
+  });
+
+  it("accepts continuation run request fields", async () => {
+    const { POST } = await loadRoute(undefined);
+    const request = new Request("http://localhost:3000/api/run-diligence?stream=false", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        question: "Should I buy Apollo.io?",
+        budgetCapUsd: 0.35,
+        stream: false,
+        parentRunId: "run_parent",
+        gapId: "gap-counter-deep-dive",
+        suggestedQuery: "Apollo.io lawsuit compliance legal response customer complaints deliverability",
       }),
     });
 

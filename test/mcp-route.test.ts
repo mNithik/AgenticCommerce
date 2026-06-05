@@ -1,38 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DiligenceRun } from "../lib/types";
+import { makeDiligenceRun, makeHealthStatus } from "./fixtures";
 
 const executeRunMock = vi.fn();
 const recentRunsMock = vi.fn();
 const verifyRunAttestationMock = vi.fn();
 
 const fakeRun: DiligenceRun = {
-  id: "run_mcp",
-  input: "Should I buy Apollo.io?",
-  subject: "Apollo.io",
-  budgetCapUsd: 0.25,
-  spentUsd: 0.03,
-  paidCalls: 3,
-  paymentMode: "mock",
-  llmProvider: "deterministic",
-  policyProfile: "standard",
-  recommendation: "need_more_evidence",
-  confidence: 0.6,
-  records: [],
-  memo: "memo",
-  analystOutput: {
-    recommendation: "need_more_evidence",
+  ...makeDiligenceRun({
+    id: "run_mcp",
     confidence: 0.6,
-    rationale: {
-      id: "claim_rationale",
-      claimText: "Mixed evidence.",
-      recordIds: [],
-      sourceUrls: [],
-    },
-    strengths: [],
-    concerns: [],
-    nextSteps: [],
-  },
-  safeSpendLog: [],
+    proofScore: 69,
+  }),
 };
 
 describe("POST /api/mcp", () => {
@@ -66,27 +45,7 @@ describe("POST /api/mcp", () => {
       };
     });
     vi.doMock("../lib/health", () => ({
-      buildHealthStatus: () => ({
-        ok: true,
-        app: "ProofSpend",
-        paymentMode: "mock",
-        policyProfile: "standard",
-        llmProvider: "deterministic",
-        mockX402: true,
-        liveConfigured: false,
-        walletConfigured: false,
-        searchReady: true,
-        snapshotSigningAvailable: false,
-        readinessSummary: "Ready",
-        estimatedPaidCallCostUsd: 0.01,
-        estimatedBaselineCalls: 3,
-        estimatedMaxCalls: 4,
-        uptimeSeconds: 12,
-        rateLimits: {
-          runDiligence: { limit: 8, windowMs: 60000 },
-        },
-        recentWebhookDeliveries: [],
-      }),
+      buildHealthStatus: () => makeHealthStatus(),
     }));
     vi.doMock("../lib/run-service", () => ({
       executeRun: executeRunMock,
@@ -237,5 +196,31 @@ describe("POST /api/mcp", () => {
     expect(response.status).toBe(200);
     expect(body.result.contents[0].text).toContain(fakeRun.id);
     expect(recentRunsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("explains confidence for a provided run payload", async () => {
+    const { POST } = await loadRoute();
+    const response = await POST(
+      new Request("http://localhost:3000/api/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 8,
+          method: "tools/call",
+          params: {
+            name: "proofspend.explain_confidence",
+            arguments: { run: fakeRun },
+          },
+        }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.result.structuredContent.proofScore).toBe(fakeRun.proofScore);
+    expect(body.result.structuredContent.confidenceBreakdown.overall).toBe(
+      fakeRun.confidenceBreakdown.overall,
+    );
   });
 });

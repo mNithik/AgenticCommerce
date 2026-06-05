@@ -2,7 +2,8 @@ import { assertRunApiAuthorized } from "../../../lib/api-auth";
 import { applyRateLimit } from "../../../lib/rate-limit";
 import { executeRun } from "../../../lib/run-service";
 import { serializeSSE } from "../../../lib/sse";
-import type { PolicyProfile, RunEvent } from "../../../lib/types";
+import { isDiligenceRun } from "../../../lib/trust";
+import type { DiligenceRun, PolicyProfile, RunEvent } from "../../../lib/types";
 
 export const runtime = "nodejs";
 
@@ -23,6 +24,10 @@ export async function POST(request: Request) {
     callbackUrl?: unknown;
     policyProfile?: unknown;
     stream?: unknown;
+    parentRunId?: unknown;
+    parentRun?: unknown;
+    gapId?: unknown;
+    suggestedQuery?: unknown;
   };
 
   try {
@@ -34,6 +39,11 @@ export async function POST(request: Request) {
   const question = typeof body.question === "string" ? body.question.trim() : "";
   const budgetCapUsd = typeof body.budgetCapUsd === "number" ? body.budgetCapUsd : Number(body.budgetCapUsd);
   const callbackUrl = typeof body.callbackUrl === "string" ? body.callbackUrl.trim() : "";
+  const parentRunId = typeof body.parentRunId === "string" ? body.parentRunId.trim() : "";
+  const parentRun = isDiligenceRun(body.parentRun) ? (body.parentRun as DiligenceRun) : undefined;
+  const gapId = typeof body.gapId === "string" ? body.gapId.trim() : "";
+  const suggestedQuery =
+    typeof body.suggestedQuery === "string" ? body.suggestedQuery.trim() : "";
   const stream =
     body.stream === false || url.searchParams.get("stream") === "false"
       ? false
@@ -69,6 +79,10 @@ export async function POST(request: Request) {
         budgetCapUsd,
         policyProfile,
         callbackUrl,
+        parentRunId: parentRunId || undefined,
+        parentRun,
+        gapId: gapId || undefined,
+        suggestedQuery: suggestedQuery || undefined,
       });
       return Response.json(run);
     } catch (error) {
@@ -92,6 +106,10 @@ export async function POST(request: Request) {
           policyProfile,
           emit,
           callbackUrl,
+          parentRunId: parentRunId || undefined,
+          parentRun,
+          gapId: gapId || undefined,
+          suggestedQuery: suggestedQuery || undefined,
         });
 
         emit({

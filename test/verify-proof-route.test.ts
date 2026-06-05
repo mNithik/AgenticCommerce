@@ -1,30 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildRunAttestation, buildSnapshotEnvelope } from "../lib/trust";
 import type { DiligenceRun, ProofPacketJson } from "../lib/types";
+import { makeDiligenceRun } from "./fixtures";
 
 const run: DiligenceRun = {
-  id: "run_verify",
-  input: "Should I buy Apollo.io?",
-  subject: "Apollo.io",
-  budgetCapUsd: 0.25,
-  spentUsd: 0.03,
-  paidCalls: 3,
-  paymentMode: "mock",
-  llmProvider: "deterministic",
-  policyProfile: "standard",
-  recommendation: "need_more_evidence",
-  confidence: 0.5,
-  records: [],
-  memo: "memo",
-  analystOutput: {
-    recommendation: "need_more_evidence",
+  ...makeDiligenceRun({
+    id: "run_verify",
     confidence: 0.5,
-    rationale: { id: "claim_1", claimText: "Mixed.", recordIds: [], sourceUrls: [] },
-    strengths: [],
-    concerns: [],
-    nextSteps: [],
-  },
-  safeSpendLog: [],
+    proofScore: 63,
+  }),
 };
 
 function encodeSnapshot(value: string) {
@@ -61,6 +45,7 @@ describe("POST /api/verify-proof", () => {
     expect(response.status).toBe(200);
     expect(payload.verified).toBe(true);
     expect(payload.signingMode).toBe("digest-only");
+    expect(packet.run.confidenceBreakdown.factors.length).toBeGreaterThan(0);
   });
 
   it("verifies a signed snapshot when the server secret is available", async () => {

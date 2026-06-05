@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { analystToMemoView, runToHistoryRow } from "../lib/dashboard-adapters";
 import type { AnalystOutput, DiligenceRun, EvidenceRecord } from "../lib/types";
+import { makeConfidenceBreakdown, makeDiligenceRun, makeProofScoreComponents } from "./fixtures";
 
 const record: EvidenceRecord = {
   id: "record_market",
@@ -44,26 +45,28 @@ const analystOutput: AnalystOutput = {
 };
 
 const run: DiligenceRun = {
-  id: "run_abc123",
-  input: "Should I spend $500 per month on Apollo.io for B2B lead generation?",
-  subject: "Apollo.io",
-  budgetCapUsd: 0.25,
-  spentUsd: 0.03,
-  paidCalls: 3,
-  paymentMode: "live",
-  llmProvider: "nvidia",
-  policyProfile: "standard",
-  recommendation: "need_more_evidence",
-  confidence: 0.64,
-  memo: "Apollo.io may fit, but more validation is needed.",
   records: [record],
   analystOutput,
-  safeSpendLog: [],
+  ...makeDiligenceRun({
+    id: "run_abc123",
+    input: "Should I spend $500 per month on Apollo.io for B2B lead generation?",
+    paymentMode: "live",
+    llmProvider: "nvidia",
+    confidence: 0.64,
+    confidenceBreakdown: makeConfidenceBreakdown({ overall: 0.64 }),
+    proofScore: 73,
+    proofScoreComponents: makeProofScoreComponents({ overall: 0.64 }),
+    memo: "Apollo.io may fit, but more validation is needed.",
+    records: [record],
+    analystOutput,
+    confidenceGaps: [],
+    safeSpendLog: [],
+  }),
 };
 
 describe("dashboard adapters", () => {
   it("maps memo claims to citation-ready view data", () => {
-    const memo = analystToMemoView(analystOutput, [record]);
+    const memo = analystToMemoView(run);
 
     expect(memo).not.toBeNull();
     expect(memo?.rationale.citations).toEqual([
@@ -83,5 +86,6 @@ describe("dashboard adapters", () => {
     expect(row.subject).toBe("Apollo.io");
     expect(row.paidCalls).toBe(3);
     expect(row.records).toBe(1);
+    expect(row.proofScore).toBe(73);
   });
 });
